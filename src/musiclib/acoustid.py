@@ -4,11 +4,11 @@ Identical fingerprints are looked up once. Requests are batched (fingerprint.N p
 held under AcoustID's 3 requests/second limit.
 """
 
+import http.client
 import json
 import sqlite3
 import sys
 import time
-import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -100,7 +100,8 @@ def run(conn: sqlite3.Connection, key: str | None, *, limit: int | None = None,
                 rows = [(fp, dur, *parse_results(res).values(), None, now())
                         for (fp, dur), res in zip(batch, results)]
                 break
-            except (urllib.error.URLError, TimeoutError, RuntimeError, ValueError) as e:
+            # OSError covers URLError, SSL errors, resets and timeouts.
+            except (OSError, http.client.HTTPException, RuntimeError, ValueError) as e:
                 if "invalid API key" in str(e):
                     raise SystemExit("AcoustID rejected the API key") from e
                 if attempt == MAX_RETRIES - 1:

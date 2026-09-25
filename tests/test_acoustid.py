@@ -67,3 +67,18 @@ def test_config_merges_local_secrets(tmp_path, monkeypatch):
     (tmp_path / "musiclib.toml").write_text(f'source_dir = "{tmp_path}/dump"\n')
     (tmp_path / "musiclib.local.toml").write_text('acoustid_key = "secret"\n')
     assert config.load(tmp_path / "musiclib.toml").acoustid_key == "secret"
+
+
+def test_run_retries_transient_network_errors(tmp_path):
+    import ssl
+
+    conn = _conn(tmp_path, ["fp1", "fp2"])
+    failures = [ssl.SSLError("bad record mac"), ConnectionResetError()]
+
+    def flaky(key, batch):
+        if failures:
+            raise failures.pop(0)
+        return fake_post(key, batch)
+
+    res = acoustid.run(conn, "k", progress=io.StringIO(), post=flaky, sleep=lambda s: None)
+    assert res["ok"] == 2 and res["error"] == 0
