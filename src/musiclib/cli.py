@@ -5,7 +5,7 @@ import json
 import os
 import sys
 
-from . import config, db, inventory, report
+from . import acoustid, config, db, inventory, report
 
 
 def _emit(obj) -> None:
@@ -17,6 +17,11 @@ def cmd_inventory(cfg: config.Config, args) -> None:
     conn = db.connect(cfg.db_path)
     _emit(inventory.run(conn, cfg.source_dir, workers=args.workers,
                         fingerprint=not args.no_fingerprint, subdir=args.subdir, limit=args.limit))
+
+
+def cmd_acoustid(cfg: config.Config, args) -> None:
+    conn = db.connect(cfg.db_path)
+    _emit(acoustid.run(conn, cfg.acoustid_key, limit=args.limit, retry_errors=args.retry_errors))
 
 
 def cmd_report(cfg: config.Config, args) -> None:
@@ -35,6 +40,11 @@ def main(argv: list[str] | None = None) -> None:
     inv.add_argument("--subdir", help="only scan this path, relative to source_dir")
     inv.add_argument("--limit", type=int, help="scan at most N files (for testing)")
     inv.set_defaults(func=cmd_inventory)
+
+    aid = sub.add_parser("acoustid", help="look up fingerprints on AcoustID (resumable)")
+    aid.add_argument("--limit", type=int, help="look up at most N fingerprints")
+    aid.add_argument("--retry-errors", action="store_true", help="retry earlier failed lookups")
+    aid.set_defaults(func=cmd_acoustid)
 
     rep = sub.add_parser("report", help="summarize the inventory as JSON")
     rep.add_argument("--top", type=int, default=10, help="examples per section")

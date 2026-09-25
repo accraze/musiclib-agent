@@ -1,5 +1,6 @@
-"""Load musiclib.toml and resolve paths."""
+"""Load musiclib.toml (+ gitignored musiclib.local.toml for secrets) and resolve paths."""
 
+import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +12,8 @@ DEFAULT_CONFIG = "musiclib.toml"
 class Config:
     source_dir: Path
     state_dir: Path
+    library_dir: Path | None = None
+    acoustid_key: str | None = None
 
     @property
     def db_path(self) -> Path:
@@ -24,13 +27,23 @@ class Config:
 def load(path: str | Path = DEFAULT_CONFIG) -> Config:
     path = Path(path)
     data = tomllib.loads(path.read_text()) if path.exists() else {}
+    local = path.with_name(path.stem + ".local.toml")
+    if local.exists():
+        data.update(tomllib.loads(local.read_text()))
     base = path.resolve().parent
 
     def resolve(value: str) -> Path:
         p = Path(value).expanduser()
-        return p if p.is_absolute() else (base / p)
+        return (p if p.is_absolute() else (base / p)).resolve()
 
-    return Config(
+    cfg = Config(
         source_dir=resolve(data.get("source_dir", "/srv/data/media/music")),
         state_dir=resolve(data.get("state_dir", "state")),
+        library_dir=resolve(data["library_dir"]) if data.get("library_dir") else None,
+        acoustid_key=os.environ.get("ACOUSTID_KEY") or data.get("acoustid_key"),
     )
+    for name in ("state_dir", "library_dir"):
+        p = getattr(cfg, name)
+        if p is not None and p.is_relative_to(cfg.source_dir):
+            raise SystemExit(f"{name} {p} is inside source_dir; the dump is read-only")
+    return cfg

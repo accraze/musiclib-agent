@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-09-24 (doc rev 15)
+Last synced: 2026-09-25 (doc rev 22)
 -->
 
 # Music Library Agent — Spec
@@ -112,9 +112,9 @@ Duplicates are detected at three tiers, from certain to fuzzy. Tiers 1 and 2 can
 | 2. Same recording | Same audio, different encode or tags | AcoustID or MusicBrainz recording ID; Chromaprint similarity | Auto by keeper ranking |
 | 3. Same release, different edition | Remaster, deluxe, regional pressing | MusicBrainz release group | Review: may be intentional |
 
-**Keeper ranking (draft, to be confirmed):**
+**Keeper ranking (confirmed, D6 and D10):**
 
-1. Lossless before lossy: FLAC, then WAV, then others.
+1. Lossless before lossy: FLAC, then WAV, then others. If a losing lossy copy has better verified tags, they are copied onto the keeper first (D10).
 2. Among lossy files: higher bitrate, and V0 or 320k before lower rates.
 3. Complete album before a partial one.
 4. Valid, fingerprint-consistent MusicBrainz tags before missing or conflicting ones.
@@ -149,14 +149,14 @@ The first full inventory ran on 2026-09-24: 58,550 audio files (588.6 GB, about 
 
 These need an answer before Milestone 2 (import). Milestone 1 (inventory) needs only the dump path.
 
-- [ ] Where should the clean library live? It must be outside the dump, which is confirmed at /srv/data/media/music.
+- [x] Clean library: /srv/data/media/music-library (the dump stays at /srv/data/media/music).
 - [x] Dump size: 633.6 GB, about 58,550 audio files. A 500-file trial ran at about 1.1 GB/s, so the full inventory takes about 10 minutes and no overnight batch is needed.
-- [ ] When a lossless copy exists, drop the lossy duplicates, or keep a lossy copy for portable devices?
+- [x] Lossless vs lossy: the lossless copy is always kept, and better tags from a lossy duplicate are carried over (D10).
 - [ ] Confirm WAV-to-FLAC conversion (D7).
 - [ ] Folder and filename layout, e.g. `$albumartist/$year - $album/$disc$track $title`. Does a media server need to read it?
 - [ ] Auto-import confidence threshold. The beets default is strong-recommendation distance ≤ 0.04; stricter means more review.
 - [ ] Should an unmatched file be imported as-is into `Unsorted/`, or stay in the review queue?
-- [ ] Is there an AcoustID API key? It's free, and needed for fingerprint lookups.
+- [x] AcoustID application key: obtained and stored locally in the gitignored musiclib.local.toml, never in this doc. Batch lookups make a full pass take about 40 minutes.
 
 ## Decision log
 
@@ -164,10 +164,11 @@ Every design decision is recorded here, newest first. To reverse one, mark it Su
 
 | # | Date | Decision | Rationale | Status |
 | --- | --- | --- | --- | --- |
+| D10 | 2026-09-25 | Lossless always wins; when a lossy duplicate has better tags (fingerprint-verified MusicBrainz IDs, art), copy those tags onto the lossless keeper before import, then quarantine the lossy copy | Keeps the best audio without losing tagging work; tags are cheap to move, audio quality is not | Accepted |
 | D9 | 2026-09-24 | Use a project-local beets config (BEETSDIR); never the global ~/.config/beets | The global config points directory at the dump with move, write and quiet all on, which would violate safety rules 1 and 2 | Accepted |
 | D8 | 2026-09-24 | Mirror the spec into `docs/SPEC.md`; the Claude Doc stays canonical | Agent sessions get the spec as repo context; discussion stays in the doc | Accepted |
 | D7 | 2026-09-24 | Convert WAV to FLAC on import | WAV tagging is unreliable; FLAC is lossless and fully taggable | Proposed |
-| D6 | 2026-09-24 | Keeper ranking as drafted in *Duplicates and keeper policy* | Prefer quality, then completeness, then tag correctness | Proposed |
+| D6 | 2026-09-24 | Keeper ranking as drafted in *Duplicates and keeper policy* | Prefer quality, then completeness, then tag correctness | Accepted |
 | D5 | 2026-09-24 | Track the spec and decisions in this doc | One living record we both edit and comment on | Accepted |
 | D4 | 2026-09-24 | Agent acts only through `musiclib` JSON subcommands | Clear tool boundary; testable; portable to Agent SDK | Accepted |
 | D3 | 2026-09-24 | Non-destructive: read-only source, copy on import, quarantine not delete | Years of files; mistakes must be recoverable | Accepted |
@@ -181,7 +182,7 @@ Milestone 1 is read-only and starts once the dump path is known. Each later mile
 | # | Milestone | Deliverable | Status |
 | --- | --- | --- | --- |
 | M1 | Inventory | `musiclib inventory`: state DB with hashes, fingerprints and tags; a summary report of formats, MBID coverage and exact duplicates | Done |
-| M2 | Dedupe + verify | `musiclib dupes` and `musiclib verify`: duplicate groups at three tiers, keeper picks, tag mismatch list | Not started |
+| M2 | Dedupe + verify | `musiclib dupes` and `musiclib verify`: duplicate groups at three tiers, keeper picks, tag mismatch list | In progress |
 | M3 | Import | beets config, `musiclib import` (dry run, then apply), quarantine and manifest | Not started |
 | M4 | Review agent | CLAUDE.md, `/dedupe` and `/review` skills, batch approval flow | Not started |
 | M5 | Ingestion | `inbox/` pipeline and `/ingest` skill, with dedupe against the existing library | Not started |

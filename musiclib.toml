@@ -5,3 +5,6 @@ source_dir = "/srv/data/media/music"
 
 # Where the state DB and reports live (gitignored).
 state_dir = "state"
+
+# The clean library root (outside the dump). Created on first import.
+library_dir = "/srv/data/media/music-library"

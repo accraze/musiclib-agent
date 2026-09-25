@@ -5,3 +5,4 @@ state/
 *.db
 *.db-journal
 reports/
+musiclib.local.toml
