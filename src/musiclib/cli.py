@@ -5,7 +5,7 @@ import json
 import os
 import sys
 
-from . import acoustid, config, db, inventory, report
+from . import acoustid, config, db, inventory, report, verify
 
 
 def _emit(obj) -> None:
@@ -22,6 +22,11 @@ def cmd_inventory(cfg: config.Config, args) -> None:
 def cmd_acoustid(cfg: config.Config, args) -> None:
     conn = db.connect(cfg.db_path)
     _emit(acoustid.run(conn, cfg.acoustid_key, limit=args.limit, retry_errors=args.retry_errors))
+
+
+def cmd_verify(cfg: config.Config, args) -> None:
+    conn = db.connect(cfg.db_path)
+    _emit(verify.run(conn, top=args.top))
 
 
 def cmd_report(cfg: config.Config, args) -> None:
@@ -45,6 +50,10 @@ def main(argv: list[str] | None = None) -> None:
     aid.add_argument("--limit", type=int, help="look up at most N fingerprints")
     aid.add_argument("--retry-errors", action="store_true", help="retry earlier failed lookups")
     aid.set_defaults(func=cmd_acoustid)
+
+    ver = sub.add_parser("verify", help="check MusicBrainz tags against AcoustID results")
+    ver.add_argument("--top", type=int, default=10, help="examples per section")
+    ver.set_defaults(func=cmd_verify)
 
     rep = sub.add_parser("report", help="summarize the inventory as JSON")
     rep.add_argument("--top", type=int, default=10, help="examples per section")

@@ -29,4 +29,5 @@ An agent that manages a personal music library: organize, MusicBrainz-tag and de
 - `uv run musiclib report [--top N]` — JSON summary: formats, bitrates, tag/MBID coverage, duplicate tiers, errors.
 - `uv run pytest` — includes a test that the source tree is byte-for-byte unchanged after an inventory.
 - `uv run musiclib acoustid [--limit N] [--retry-errors]` — batch-look up fingerprints on AcoustID into `acoustid_lookups` (resumable, rate-limited).
+- `uv run musiclib verify [--top N]` — classify every file: tag confirmed / mismatch / unverifiable / suggest / unknown vs AcoustID; flags suspect folders. Read-only.
 - Config: `musiclib.toml` (`source_dir`, `state_dir`, `library_dir`); secrets such as `acoustid_key` go in gitignored `musiclib.local.toml`, never in the repo or the spec doc. Never run `beet` with the global config (D9).
