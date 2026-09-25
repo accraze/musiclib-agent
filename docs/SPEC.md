@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-09-24 (doc rev 9)
+Last synced: 2026-09-24 (doc rev 13)
 -->
 
 # Music Library Agent — Spec
@@ -125,8 +125,8 @@ Duplicates are detected at three tiers, from certain to fuzzy. Tiers 1 and 2 can
 
 These need an answer before Milestone 2 (import). Milestone 1 (inventory) needs only the dump path.
 
-- [ ] Where is the dump directory, and where should the clean library live?
-- [ ] Roughly how large is the dump, in files or GB? This decides whether fingerprinting runs as an overnight batch.
+- [ ] Where should the clean library live? It must be outside the dump, which is confirmed at /srv/data/media/music.
+- [x] Dump size: 633.6 GB, about 58,550 audio files. A 500-file trial ran at about 1.1 GB/s, so the full inventory takes about 10 minutes and no overnight batch is needed.
 - [ ] When a lossless copy exists, drop the lossy duplicates, or keep a lossy copy for portable devices?
 - [ ] Confirm WAV-to-FLAC conversion (D7).
 - [ ] Folder and filename layout, e.g. `$albumartist/$year - $album/$disc$track $title`. Does a media server need to read it?
@@ -140,6 +140,7 @@ Every design decision is recorded here, newest first. To reverse one, mark it Su
 
 | # | Date | Decision | Rationale | Status |
 | --- | --- | --- | --- | --- |
+| D9 | 2026-09-24 | Use a project-local beets config (BEETSDIR); never the global ~/.config/beets | The global config points directory at the dump with move, write and quiet all on, which would violate safety rules 1 and 2 | Accepted |
 | D8 | 2026-09-24 | Mirror the spec into `docs/SPEC.md`; the Claude Doc stays canonical | Agent sessions get the spec as repo context; discussion stays in the doc | Accepted |
 | D7 | 2026-09-24 | Convert WAV to FLAC on import | WAV tagging is unreliable; FLAC is lossless and fully taggable | Proposed |
 | D6 | 2026-09-24 | Keeper ranking as drafted in *Duplicates and keeper policy* | Prefer quality, then completeness, then tag correctness | Proposed |
@@ -155,7 +156,7 @@ Milestone 1 is read-only and starts once the dump path is known. Each later mile
 
 | # | Milestone | Deliverable | Status |
 | --- | --- | --- | --- |
-| M1 | Inventory | `musiclib inventory`: state DB with hashes, fingerprints and tags; a summary report of formats, MBID coverage and exact duplicates | Not started |
+| M1 | Inventory | `musiclib inventory`: state DB with hashes, fingerprints and tags; a summary report of formats, MBID coverage and exact duplicates | In progress |
 | M2 | Dedupe + verify | `musiclib dupes` and `musiclib verify`: duplicate groups at three tiers, keeper picks, tag mismatch list | Not started |
 | M3 | Import | beets config, `musiclib import` (dry run, then apply), quarantine and manifest | Not started |
 | M4 | Review agent | CLAUDE.md, `/dedupe` and `/review` skills, batch approval flow | Not started |

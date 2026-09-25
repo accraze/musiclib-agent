@@ -1,0 +1,7 @@
+# musiclib configuration. Paths may use ~.
+
+# The unsorted dump. Treated as strictly read-only (SPEC: Safety rules #1).
+source_dir = "/srv/data/media/music"
+
+# Where the state DB and reports live (gitignored).
+state_dir = "state"

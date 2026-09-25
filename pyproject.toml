@@ -1,0 +1,23 @@
+[project]
+name = "musiclib"
+version = "0.1.0"
+description = "Tools for the music library agent: inventory, dedupe, import"
+authors = [
+    { name = "Andy Craze", email = "accraze@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "mutagen>=1.48.1",
+]
+
+[project.scripts]
+musiclib = "musiclib.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

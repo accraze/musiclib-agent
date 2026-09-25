@@ -22,3 +22,10 @@ An agent that manages a personal music library: organize, MusicBrainz-tag and de
 
 - Python 3.12 via `uv`; the `musiclib` CLI emits JSON.
 - Engine: beets (`beet`), Chromaprint (`fpcalc`), `ffprobe`. Picard is available for manual fixes.
+
+## Commands
+
+- `uv run musiclib inventory [--subdir P] [--limit N] [--no-fingerprint]` — scan the dump into `state/musiclib.db` (read-only, incremental; progress on stderr, JSON result on stdout).
+- `uv run musiclib report [--top N]` — JSON summary: formats, bitrates, tag/MBID coverage, duplicate tiers, errors.
+- `uv run pytest` — includes a test that the source tree is byte-for-byte unchanged after an inventory.
+- Config: `musiclib.toml` (`source_dir`, `state_dir`). Never run `beet` with the global config (D9).
