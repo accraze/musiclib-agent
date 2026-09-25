@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-09-24 (doc rev 13)
+Last synced: 2026-09-24 (doc rev 15)
 -->
 
 # Music Library Agent — Spec
@@ -121,6 +121,30 @@ Duplicates are detected at three tiers, from certain to fuzzy. Tiers 1 and 2 can
 5. Embedded art present.
 6. Tiebreak: larger file, then the earliest path found.
 
+## Inventory results (M1)
+
+The first full inventory ran on 2026-09-24: 58,550 audio files (588.6 GB, about 4,350 hours) in 4,939 folders, scanned in 7.6 minutes. About 88% of files already carry MusicBrainz IDs. Duplicates look modest, but many tags are wrong in a telling way.
+
+| Codec | Files | Size (GB) |
+| --- | --- | --- |
+| MP3 | 53,706 | 466.2 |
+| FLAC | 3,653 | 107.5 |
+| ALAC | 263 | 7.0 |
+| Opus | 475 | 2.7 |
+| AAC | 212 | 2.5 |
+| Other (WMA, Vorbis, WAV, AIFF, APE) | 241 | 2.9 |
+
+- **MP3 quality:** 23,688 at 320k, 13,739 VBR, 10,234 at 192–319k, 6,039 below 192k.
+- **Tag coverage:** artist 98%, MusicBrainz recording and release IDs 88%, AcoustID 27%, embedded art 88%. 363 folders have no MusicBrainz IDs at all.
+- **Identical files (tier 1):** 176 groups, 190 extra copies, 1.9 GB. Example: the same Sun Ra album at the root and under `Sun Ra/`.
+- **Identical fingerprints (tier 2 preview):** 425 groups, 520 extra copies, 4.1 GB. This counts exact matches only; fuzzy matching in M2 will find more.
+- **Same MusicBrainz recording ID:** 2,347 groups. 1,748 span different folders and are probably real duplicates. 599 groups (1,454 files) sit inside a single folder, which almost always means bad tags: different tracks of one album carrying the same recording ID.
+- **Other tag problems:** 416 folders mix more than one release ID, and 286 release IDs are spread over more than one folder.
+- **Damaged files:** 34 files can't be fingerprinted (empty or truncated audio). 576 more decode with errors but did fingerprint.
+- **Non-audio:** 22,181 files, mostly `.mood` (14,012), cover art, `.cue`, `.log` and a few `.cbr` comics.
+
+**What this means for M2:** existing MusicBrainz IDs can't be trusted on their own. Verification has to compare them against fingerprints, and a folder with repeated recording IDs should be flagged for re-matching.
+
 ## Open questions
 
 These need an answer before Milestone 2 (import). Milestone 1 (inventory) needs only the dump path.
@@ -156,7 +180,7 @@ Milestone 1 is read-only and starts once the dump path is known. Each later mile
 
 | # | Milestone | Deliverable | Status |
 | --- | --- | --- | --- |
-| M1 | Inventory | `musiclib inventory`: state DB with hashes, fingerprints and tags; a summary report of formats, MBID coverage and exact duplicates | In progress |
+| M1 | Inventory | `musiclib inventory`: state DB with hashes, fingerprints and tags; a summary report of formats, MBID coverage and exact duplicates | Done |
 | M2 | Dedupe + verify | `musiclib dupes` and `musiclib verify`: duplicate groups at three tiers, keeper picks, tag mismatch list | Not started |
 | M3 | Import | beets config, `musiclib import` (dry run, then apply), quarantine and manifest | Not started |
 | M4 | Review agent | CLAUDE.md, `/dedupe` and `/review` skills, batch approval flow | Not started |
