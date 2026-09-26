@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-09-25 (doc rev 24)
+Last synced: 2026-09-25 (doc rev 32)
 -->
 
 # Music Library Agent — Spec
@@ -172,10 +172,10 @@ These need an answer before Milestone 2 (import). Milestone 1 (inventory) needs 
 - [x] Clean library: /srv/data/media/music-library (the dump stays at /srv/data/media/music).
 - [x] Dump size: 633.6 GB, about 58,550 audio files. A 500-file trial ran at about 1.1 GB/s, so the full inventory takes about 10 minutes and no overnight batch is needed.
 - [x] Lossless vs lossy: the lossless copy is always kept, and better tags from a lossy duplicate are carried over (D10).
-- [ ] Confirm WAV-to-FLAC conversion (D7).
-- [ ] Folder and filename layout, e.g. `$albumartist/$year - $album/$disc$track $title`. Does a media server need to read it?
+- [x] WAV-to-FLAC conversion confirmed (D7). It affects 23 files.
+- [x] Folder and filename layout `$albumartist/$year - $album/$disc$track $title` confirmed (D12). The library is played in Strawberry now, with a media server later; both read any tagged layout.
 - [ ] Auto-import confidence threshold. The beets default is strong-recommendation distance ≤ 0.04; stricter means more review.
-- [ ] Should an unmatched file be imported as-is into `Unsorted/`, or stay in the review queue?
+- [x] Albums that can't be matched go into `Unsorted/`, imported as-is with tags untouched (D13).
 - [x] AcoustID application key: obtained and stored locally in the gitignored musiclib.local.toml, never in this doc. Batch lookups make a full pass take about 40 minutes.
 
 ## Decision log
@@ -184,10 +184,13 @@ Every design decision is recorded here, newest first. To reverse one, mark it Su
 
 | # | Date | Decision | Rationale | Status |
 | --- | --- | --- | --- | --- |
+| D13 | 2026-09-25 | Albums with no MusicBrainz match import as-is into Unsorted/ with tags untouched | Keeps the review queue for decisions that matter; Unsorted/ can be re-matched later | Accepted |
+| D12 | 2026-09-25 | Layout: $albumartist/$year - $album/$track $title, with a disc prefix on multi-disc albums and Compilations/ for various artists | Conventional and readable by Strawberry and any media server added later | Accepted |
+| D11 | 2026-09-25 | Handling of verify results: re-match suspect folders as whole albums; auto-apply suggest matches with score above 0.9; send mismatch and ambiguous folders to review; accept alt_recording | Mistags cluster by folder, so album-level matching fixes them in bulk; people judge only the ambiguous cases | Accepted |
 | D10 | 2026-09-25 | Lossless always wins; when a lossy duplicate has better tags (fingerprint-verified MusicBrainz IDs, art), copy those tags onto the lossless keeper before import, then quarantine the lossy copy | Keeps the best audio without losing tagging work; tags are cheap to move, audio quality is not | Accepted |
 | D9 | 2026-09-24 | Use a project-local beets config (BEETSDIR); never the global ~/.config/beets | The global config points directory at the dump with move, write and quiet all on, which would violate safety rules 1 and 2 | Accepted |
 | D8 | 2026-09-24 | Mirror the spec into `docs/SPEC.md`; the Claude Doc stays canonical | Agent sessions get the spec as repo context; discussion stays in the doc | Accepted |
-| D7 | 2026-09-24 | Convert WAV to FLAC on import | WAV tagging is unreliable; FLAC is lossless and fully taggable | Proposed |
+| D7 | 2026-09-24 | Convert WAV to FLAC on import | WAV tagging is unreliable; FLAC is lossless and fully taggable | Accepted |
 | D6 | 2026-09-24 | Keeper ranking as drafted in *Duplicates and keeper policy* | Prefer quality, then completeness, then tag correctness | Accepted |
 | D5 | 2026-09-24 | Track the spec and decisions in this doc | One living record we both edit and comment on | Accepted |
 | D4 | 2026-09-24 | Agent acts only through `musiclib` JSON subcommands | Clear tool boundary; testable; portable to Agent SDK | Accepted |
