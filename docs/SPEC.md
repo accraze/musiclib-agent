@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-09-26 (doc rev 40)
+Last synced: 2026-09-26 (doc rev 44)
 -->
 
 # Music Library Agent — Spec
@@ -180,6 +180,22 @@ Duplicates can free 8.7 GB, about 1.5% of the dump. 5.1 GB of that can be remove
 - **Tag carry-over (D10):** 5 automatic groups have a losing copy with clearly better verified tags. Those tags are copied onto the keeper at import.
 - **Typical review case:** Wailing Souls, *Firehouse Rock*, has a 9-track FLAC and a 10-track 320k copy with a bonus track.
 - **Tier 3** is mostly the same tracklist on different pressings (for example, two *Pussy Cats* releases). The agent can resolve most of these quickly.
+
+## Match results (M3 dry run)
+
+69% of albums (3,284 albums, 37,319 files, 380 GB) are strong MusicBrainz matches, ready to import automatically. 1,480 albums (20,445 files) need review. The dry run matched 4,768 albums in 4 hours on 2026-09-26 and wrote nothing.
+
+| Outcome | Albums | What happens next |
+| --- | --- | --- |
+| auto (strong match) | 3,284 | Import with the matched release pinned |
+| review: close call (distance < 0.1) | 492 | Agent can approve most in batches: clear winner, small penalties |
+| review: in a duplicate review group | 56 | Resolve the duplicate first |
+| review: weak candidates (0.1 to 0.5) | 534 | Agent or you pick a release, or send to Unsorted |
+| review: no real candidate (distance ≥ 0.5) | 398 | Likely Unsorted/ (D13) after a quick check |
+| error: unreadable files | 4 | Listed for you; not imported |
+
+- **Unsorted is empty so far:** beets almost always returns *some* candidate, so no album had zero candidates. The 398 albums whose best candidate is at distance 0.5 or worse are effectively unmatched. M4 should route them to Unsorted/ after a glance.
+- **The 4 errors** are unreadable files, for example the Alvarius B *Blood Operatives* folder.
 
 ## Open questions
 
