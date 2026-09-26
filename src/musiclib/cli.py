@@ -5,7 +5,7 @@ import json
 import os
 import sys
 
-from . import acoustid, config, db, inventory, report, verify
+from . import acoustid, config, db, dupes, inventory, report, verify
 
 
 def _emit(obj) -> None:
@@ -30,6 +30,11 @@ def cmd_acoustid(cfg: config.Config, args) -> None:
 def cmd_verify(cfg: config.Config, args) -> None:
     conn = db.connect(cfg.db_path)
     _emit(verify.run(conn, top=args.top))
+
+
+def cmd_dupes(cfg: config.Config, args) -> None:
+    conn = db.connect(cfg.db_path)
+    _emit(dupes.find(conn))
 
 
 def cmd_report(cfg: config.Config, args) -> None:
@@ -59,6 +64,9 @@ def main(argv: list[str] | None = None) -> None:
     ver = sub.add_parser("verify", help="check MusicBrainz tags against AcoustID results")
     ver.add_argument("--top", type=int, default=10, help="examples per section")
     ver.set_defaults(func=cmd_verify)
+
+    dup = sub.add_parser("dupes", help="group duplicates and propose keepers (run after verify)")
+    dup.set_defaults(func=cmd_dupes)
 
     rep = sub.add_parser("report", help="summarize the inventory as JSON")
     rep.add_argument("--top", type=int, default=10, help="examples per section")
