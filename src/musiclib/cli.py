@@ -50,6 +50,19 @@ def cmd_match(cfg: config.Config, args) -> None:
                         rematch=args.rematch))
 
 
+def cmd_import(cfg: config.Config, args) -> None:
+    from . import beetsenv
+    beetsenv.setup(cfg)
+    from . import importer
+
+    conn = db.connect(cfg.db_path)
+    importer.migrate(conn)
+    if not args.apply:
+        _emit(importer.plan(conn, cfg.source_dir, args.which, args.limit))
+        return
+    _emit(importer.run(conn, cfg.source_dir, cfg.state_dir / "staging", args.which, limit=args.limit))
+
+
 def cmd_report(cfg: config.Config, args) -> None:
     conn = db.connect(cfg.db_path)
     _emit(report.inventory_summary(conn, top=args.top))
@@ -88,6 +101,13 @@ def main(argv: list[str] | None = None) -> None:
     mat.add_argument("--summary", action="store_true", help="summarize existing matches only")
     mat.add_argument("--top", type=int, default=10, help="examples in --summary")
     mat.set_defaults(func=cmd_match)
+
+    imp = sub.add_parser("import", help="import matched albums into the library (dry run without --apply)")
+    imp.add_argument("--which", choices=["auto", "unsorted", "approved"], default="auto",
+                     help="auto: strong matches; unsorted: no match, as-is (D13); approved: reviewed")
+    imp.add_argument("--limit", type=int, help="import at most N albums")
+    imp.add_argument("--apply", action="store_true", help="actually copy files into the library")
+    imp.set_defaults(func=cmd_import)
 
     rep = sub.add_parser("report", help="summarize the inventory as JSON")
     rep.add_argument("--top", type=int, default=10, help="examples per section")
