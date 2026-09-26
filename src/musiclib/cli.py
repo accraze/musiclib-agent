@@ -37,6 +37,19 @@ def cmd_dupes(cfg: config.Config, args) -> None:
     _emit(dupes.find(conn))
 
 
+def cmd_match(cfg: config.Config, args) -> None:
+    from . import beetsenv
+    beetsenv.setup(cfg)  # before anything imports beets (D9)
+    from . import match
+
+    conn = db.connect(cfg.db_path)
+    if args.summary:
+        _emit(match.summary(conn, top=args.top))
+    else:
+        _emit(match.run(conn, cfg.source_dir, subdir=args.subdir, limit=args.limit,
+                        rematch=args.rematch))
+
+
 def cmd_report(cfg: config.Config, args) -> None:
     conn = db.connect(cfg.db_path)
     _emit(report.inventory_summary(conn, top=args.top))
@@ -67,6 +80,14 @@ def main(argv: list[str] | None = None) -> None:
 
     dup = sub.add_parser("dupes", help="group duplicates and propose keepers (run after verify)")
     dup.set_defaults(func=cmd_dupes)
+
+    mat = sub.add_parser("match", help="dry run: match albums on MusicBrainz via beets (read-only)")
+    mat.add_argument("--subdir", help="only top-level folders starting with this")
+    mat.add_argument("--limit", type=int, help="match at most N albums")
+    mat.add_argument("--rematch", action="store_true", help="re-match albums already matched")
+    mat.add_argument("--summary", action="store_true", help="summarize existing matches only")
+    mat.add_argument("--top", type=int, default=10, help="examples in --summary")
+    mat.set_defaults(func=cmd_match)
 
     rep = sub.add_parser("report", help="summarize the inventory as JSON")
     rep.add_argument("--top", type=int, default=10, help="examples per section")

@@ -31,4 +31,6 @@ An agent that manages a personal music library: organize, MusicBrainz-tag and de
 - `uv run musiclib acoustid [--limit N] [--retry-errors]` — batch-look up fingerprints on AcoustID into `acoustid_lookups` (resumable, rate-limited). `--titles` fetches recording titles for mismatch/suggest files; run it after `verify`, then re-run `verify`.
 - `uv run musiclib verify [--top N]` — classify every file: tag confirmed / alt_recording / mismatch / unverifiable / suggest / unknown vs AcoustID; flags suspect folders. Read-only.
 - `uv run musiclib dupes` — tiered duplicate groups with proposed keepers (tier 1 identical files, tier 2 album copies, tier 3 editions) into `dupe_groups`/`dupe_members`. Proposals only; nothing moves. Run after `verify`.
+- `uv run musiclib match [--subdir P] [--limit N] [--rematch] [--summary]` — dry run: beets/MusicBrainz match per album into `matches` (auto / review / unsorted / error). Read-only on files; ~5 s/album (MB rate limit); resumable.
+- beets runs only through `musiclib.beetsenv.setup()`, which generates `state/beets/config.yaml` from `musiclib.toml` and sets `BEETSDIR` (D9).
 - Config: `musiclib.toml` (`source_dir`, `state_dir`, `library_dir`); secrets such as `acoustid_key` go in gitignored `musiclib.local.toml`, never in the repo or the spec doc. Never run `beet` with the global config (D9).
