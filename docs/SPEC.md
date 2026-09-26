@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-09-25 (doc rev 32)
+Last synced: 2026-09-25 (doc rev 34)
 -->
 
 # Music Library Agent — Spec
@@ -165,6 +165,22 @@ AcoustID confirms 81% of existing MusicBrainz recording tags. Only 947 files (1.
 
 **Proposed handling for M3:** re-match suspect folders as whole albums in beets. Auto-apply `suggest` matches above 0.9. Send `mismatch` and ambiguous folders to the review queue. Treat `alt_recording` as fine, since beets will pick the right release when it matches the album.
 
+## Duplicate results (M2)
+
+Duplicates can free 8.7 GB, about 1.5% of the dump. 5.1 GB of that can be removed automatically; the other 3.6 GB needs review. Folders are compared by the AcoustID identity of their tracks, so copies with wrong or missing tags are still caught (D14).
+
+| Tier | What | Groups | Action | Reclaimable (GB) |
+| --- | --- | --- | --- | --- |
+| 1 | Identical files, e.g. `Dear Mr. Fantasy (2023_05_20 16_20_17 UTC).flac` | 43 | auto | 0.7 |
+| 2 | Same album in two or more folders, lower-quality copy fully covered | 66 | auto | 4.4 |
+| 2 | Same album, but a lower-quality copy has a track the best copy lacks | 11 | review | 0.1 |
+| 3 | Overlapping folders tagged as different releases (editions, pressings) | 37 | review | 3.5 |
+
+- **Keepers** follow the ranking: quality tier first (lossless, then about 320k, V0/256k, 192k, 128k), then completeness, verified tags, art, and cleaner filenames. Split disc folders (CD1, CD2) are both kept over a worse combined copy.
+- **Tag carry-over (D10):** 5 automatic groups have a losing copy with clearly better verified tags. Those tags are copied onto the keeper at import.
+- **Typical review case:** Wailing Souls, *Firehouse Rock*, has a 9-track FLAC and a 10-track 320k copy with a bonus track.
+- **Tier 3** is mostly the same tracklist on different pressings (for example, two *Pussy Cats* releases). The agent can resolve most of these quickly.
+
 ## Open questions
 
 These need an answer before Milestone 2 (import). Milestone 1 (inventory) needs only the dump path.
@@ -184,6 +200,7 @@ Every design decision is recorded here, newest first. To reverse one, mark it Su
 
 | # | Date | Decision | Rationale | Status |
 | --- | --- | --- | --- | --- |
+| D14 | 2026-09-25 | Duplicates are judged per folder by AcoustID track identity: a folder is a duplicate only if 90% or more of its tracks are in another folder; albums and compilations that share a few tracks are both kept | Most duplicates are whole album copies; audio identity survives bad tags; removing one track from a compilation would break it | Proposed |
 | D13 | 2026-09-25 | Albums with no MusicBrainz match import as-is into Unsorted/ with tags untouched | Keeps the review queue for decisions that matter; Unsorted/ can be re-matched later | Accepted |
 | D12 | 2026-09-25 | Layout: $albumartist/$year - $album/$track $title, with a disc prefix on multi-disc albums and Compilations/ for various artists | Conventional and readable by Strawberry and any media server added later | Accepted |
 | D11 | 2026-09-25 | Handling of verify results: re-match suspect folders as whole albums; auto-apply suggest matches with score above 0.9; send mismatch and ambiguous folders to review; accept alt_recording | Mistags cluster by folder, so album-level matching fixes them in bulk; people judge only the ambiguous cases | Accepted |
@@ -205,7 +222,7 @@ Milestone 1 is read-only and starts once the dump path is known. Each later mile
 | # | Milestone | Deliverable | Status |
 | --- | --- | --- | --- |
 | M1 | Inventory | `musiclib inventory`: state DB with hashes, fingerprints and tags; a summary report of formats, MBID coverage and exact duplicates | Done |
-| M2 | Dedupe + verify | `musiclib dupes` and `musiclib verify`: duplicate groups at three tiers, keeper picks, tag mismatch list | In progress |
+| M2 | Dedupe + verify | `musiclib dupes` and `musiclib verify`: duplicate groups at three tiers, keeper picks, tag mismatch list | Done |
 | M3 | Import | beets config, `musiclib import` (dry run, then apply), quarantine and manifest | Not started |
 | M4 | Review agent | CLAUDE.md, `/dedupe` and `/review` skills, batch approval flow | Not started |
 | M5 | Ingestion | `inbox/` pipeline and `/ingest` skill, with dedupe against the existing library | Not started |
