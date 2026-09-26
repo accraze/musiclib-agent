@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-09-25 (doc rev 34)
+Last synced: 2026-09-25 (doc rev 37)
 -->
 
 # Music Library Agent — Spec
@@ -190,7 +190,7 @@ These need an answer before Milestone 2 (import). Milestone 1 (inventory) needs 
 - [x] Lossless vs lossy: the lossless copy is always kept, and better tags from a lossy duplicate are carried over (D10).
 - [x] WAV-to-FLAC conversion confirmed (D7). It affects 23 files.
 - [x] Folder and filename layout `$albumartist/$year - $album/$disc$track $title` confirmed (D12). The library is played in Strawberry now, with a media server later; both read any tagged layout.
-- [ ] Auto-import confidence threshold. The beets default is strong-recommendation distance ≤ 0.04; stricter means more review.
+- [x] Auto-import threshold: the beets default, a strong match at distance ≤ 0.04. Anything weaker goes to review (D15).
 - [x] Albums that can't be matched go into `Unsorted/`, imported as-is with tags untouched (D13).
 - [x] AcoustID application key: obtained and stored locally in the gitignored musiclib.local.toml, never in this doc. Batch lookups make a full pass take about 40 minutes.
 
@@ -200,7 +200,9 @@ Every design decision is recorded here, newest first. To reverse one, mark it Su
 
 | # | Date | Decision | Rationale | Status |
 | --- | --- | --- | --- | --- |
-| D14 | 2026-09-25 | Duplicates are judged per folder by AcoustID track identity: a folder is a duplicate only if 90% or more of its tracks are in another folder; albums and compilations that share a few tracks are both kept | Most duplicates are whole album copies; audio identity survives bad tags; removing one track from a compilation would break it | Proposed |
+| D16 | 2026-09-25 | Import in two steps: musiclib match runs beets matching (tag_album) as a read-only dry run and records a verdict and candidates per album; musiclib import then copies each approved album with its chosen release pinned | beets has no real dry run; this makes safety rule 4 concrete, gives the review agent ranked candidates and penalties, and makes imports deterministic | Proposed |
+| D15 | 2026-09-25 | Auto-import only on a beets strong match (distance ≤ 0.04, the default); weaker matches go to the review queue | When in doubt, ask; the default is well tested | Accepted |
+| D14 | 2026-09-25 | Duplicates are judged per folder by AcoustID track identity: a folder is a duplicate only if 90% or more of its tracks are in another folder; albums and compilations that share a few tracks are both kept | Most duplicates are whole album copies; audio identity survives bad tags; removing one track from a compilation would break it | Accepted |
 | D13 | 2026-09-25 | Albums with no MusicBrainz match import as-is into Unsorted/ with tags untouched | Keeps the review queue for decisions that matter; Unsorted/ can be re-matched later | Accepted |
 | D12 | 2026-09-25 | Layout: $albumartist/$year - $album/$track $title, with a disc prefix on multi-disc albums and Compilations/ for various artists | Conventional and readable by Strawberry and any media server added later | Accepted |
 | D11 | 2026-09-25 | Handling of verify results: re-match suspect folders as whole albums; auto-apply suggest matches with score above 0.9; send mismatch and ambiguous folders to review; accept alt_recording | Mistags cluster by folder, so album-level matching fixes them in bulk; people judge only the ambiguous cases | Accepted |
@@ -223,7 +225,7 @@ Milestone 1 is read-only and starts once the dump path is known. Each later mile
 | --- | --- | --- | --- |
 | M1 | Inventory | `musiclib inventory`: state DB with hashes, fingerprints and tags; a summary report of formats, MBID coverage and exact duplicates | Done |
 | M2 | Dedupe + verify | `musiclib dupes` and `musiclib verify`: duplicate groups at three tiers, keeper picks, tag mismatch list | Done |
-| M3 | Import | beets config, `musiclib import` (dry run, then apply), quarantine and manifest | Not started |
+| M3 | Import | beets config, `musiclib import` (dry run, then apply), quarantine and manifest | In progress |
 | M4 | Review agent | CLAUDE.md, `/dedupe` and `/review` skills, batch approval flow | Not started |
 | M5 | Ingestion | `inbox/` pipeline and `/ingest` skill, with dedupe against the existing library | Not started |
 | M6 | Audit + unattended | `/audit`; optional Agent SDK runner triggered by a watcher or cron | Not started |
