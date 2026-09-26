@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-09-25 (doc rev 37)
+Last synced: 2026-09-26 (doc rev 40)
 -->
 
 # Music Library Agent — Spec
@@ -200,6 +200,8 @@ Every design decision is recorded here, newest first. To reverse one, mark it Su
 
 | # | Date | Decision | Rationale | Status |
 | --- | --- | --- | --- | --- |
+| D18 | 2026-09-26 | Quarantine is a manifest, not a folder: nothing is ever moved out of the dump. Losing duplicates are simply not imported and are listed, with reasons, in a not-imported report. You archive or delete the dump yourself once the library checks out. | Safety rule 1 (dump is read-only) makes a physical quarantine impossible; the dump itself is the backup. Clarifies safety rule 3. | Proposed |
+| D17 | 2026-09-26 | Use the original release year in folder names: the path uses $original_year, falling back to $year. For example 1965 - Pastel Blues, not 2012 - Pastel Blues for a 2012 reissue. | Matches often land on reissues; the original year sorts discographies correctly. Only the path changes; tags keep the matched release's own date, unlike beets' original_date option. | Proposed |
 | D16 | 2026-09-25 | Import in two steps: musiclib match runs beets matching (tag_album) as a read-only dry run and records a verdict and candidates per album; musiclib import then copies each approved album with its chosen release pinned | beets has no real dry run; this makes safety rule 4 concrete, gives the review agent ranked candidates and penalties, and makes imports deterministic | Proposed |
 | D15 | 2026-09-25 | Auto-import only on a beets strong match (distance ≤ 0.04, the default); weaker matches go to the review queue | When in doubt, ask; the default is well tested | Accepted |
 | D14 | 2026-09-25 | Duplicates are judged per folder by AcoustID track identity: a folder is a duplicate only if 90% or more of its tracks are in another folder; albums and compilations that share a few tracks are both kept | Most duplicates are whole album copies; audio identity survives bad tags; removing one track from a compilation would break it | Accepted |
