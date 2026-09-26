@@ -21,7 +21,10 @@ def cmd_inventory(cfg: config.Config, args) -> None:
 
 def cmd_acoustid(cfg: config.Config, args) -> None:
     conn = db.connect(cfg.db_path)
-    _emit(acoustid.run(conn, cfg.acoustid_key, limit=args.limit, retry_errors=args.retry_errors))
+    if args.titles:
+        _emit(acoustid.fetch_titles(conn, cfg.acoustid_key))
+    else:
+        _emit(acoustid.run(conn, cfg.acoustid_key, limit=args.limit, retry_errors=args.retry_errors))
 
 
 def cmd_verify(cfg: config.Config, args) -> None:
@@ -49,6 +52,8 @@ def main(argv: list[str] | None = None) -> None:
     aid = sub.add_parser("acoustid", help="look up fingerprints on AcoustID (resumable)")
     aid.add_argument("--limit", type=int, help="look up at most N fingerprints")
     aid.add_argument("--retry-errors", action="store_true", help="retry earlier failed lookups")
+    aid.add_argument("--titles", action="store_true",
+                     help="fetch recording titles for mismatch/suggest files (run after verify)")
     aid.set_defaults(func=cmd_acoustid)
 
     ver = sub.add_parser("verify", help="check MusicBrainz tags against AcoustID results")

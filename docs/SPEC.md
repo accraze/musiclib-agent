@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-09-25 (doc rev 22)
+Last synced: 2026-09-25 (doc rev 24)
 -->
 
 # Music Library Agent — Spec
@@ -144,6 +144,26 @@ The first full inventory ran on 2026-09-24: 58,550 audio files (588.6 GB, about 
 - **Non-audio:** 22,181 files, mostly `.mood` (14,012), cover art, `.cue`, `.log` and a few `.cbr` comics.
 
 **What this means for M2:** existing MusicBrainz IDs can't be trusted on their own. Verification has to compare them against fingerprints, and a folder with repeated recording IDs should be flagged for re-matching.
+
+## Tag verification results (M2)
+
+AcoustID confirms 81% of existing MusicBrainz recording tags. Only 947 files (1.6%) are confident mismatches, concentrated in 98 folders. Lookups ran on 2026-09-25: 55,262 distinct fingerprints in 67 minutes, with no failures.
+
+| Verdict | Meaning | Files | % |
+| --- | --- | --- | --- |
+| confirmed | Tagged recording is among AcoustID's matches | 47,518 | 81.2 |
+| unknown | No tag, no confident AcoustID match | 4,825 | 8.2 |
+| unverifiable | Tagged, but AcoustID has no confident recording for the audio | 2,112 | 3.6 |
+| suggest | No tag, confident AcoustID match: can be auto-tagged | 2,005 | 3.4 |
+| alt_recording | Different recording ID but same title: same song, another release | 1,111 | 1.9 |
+| mismatch | AcoustID confidently says it's a different song | 947 | 1.6 |
+| no_lookup | Damaged audio that couldn't be fingerprinted (32 of the 34 damaged files; the other 2 have unreadable tags only) | 32 | 0.1 |
+
+- **Suspect folders:** 98 folders (1,445 files) where at least half the tracks mismatch or share one recording ID. The worst are the Bear Family doo-wop box set (every track mismatched on several volumes), *The Great Deceiver* live set, and a 99-track anime vocal collection with 82 repeated IDs.
+- **Real mistags look like:** audio shifted against titles (Flying Luttenbachers, *Gods of Chaos*: "Pointed Stick Variations c)" is actually "Alien Autopsy"), and remixes tagged as the original (Gorillaz "Dirty Harry" remix tagged "Clint Eastwood").
+- **Ambiguous cases:** dub albums fingerprint as the songs they version (Burning Spear, *Living Dub*). A person or the agent should decide these, not a rule.
+
+**Proposed handling for M3:** re-match suspect folders as whole albums in beets. Auto-apply `suggest` matches above 0.9. Send `mismatch` and ambiguous folders to the review queue. Treat `alt_recording` as fine, since beets will pick the right release when it matches the album.
 
 ## Open questions
 

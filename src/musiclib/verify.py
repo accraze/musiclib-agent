@@ -2,6 +2,8 @@
 
 Verdicts (per file):
   confirmed    tag's recording is among AcoustID's matches
+  alt_recording  tag's recording isn't AcoustID's, but the file's title matches one of them:
+               most likely the same song linked to another release's recording
   mismatch     AcoustID confidently matched other recordings, not the tagged one
   unverifiable tagged, but AcoustID has no (confident) recording for this audio
   suggest      untagged, AcoustID has a confident recording
@@ -10,7 +12,11 @@ Verdicts (per file):
 """
 
 import json
+import re
 import sqlite3
+import unicodedata
+
+from .acoustid import migrate
 
 MIN_SCORE = 0.8  # AcoustID results below this are treated as no match
 
@@ -27,7 +33,22 @@ CREATE INDEX IF NOT EXISTS verify_verdict ON verify(verdict);
 """
 
 
-def classify(tag: str | None, status: str | None, recordings_json: str | None) -> tuple[str, list[dict]]:
+def norm_title(title: str | None) -> str:
+    """Lowercase, strip accents, bracketed suffixes and punctuation: 'Help Us (Dub)' -> 'help us'."""
+    t = unicodedata.normalize("NFKD", title or "").encode("ascii", "ignore").decode().lower()
+    t = re.sub(r"[\(\[\{].*?[\)\]\}]", " ", t)
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", t).split())
+
+
+def titles_agree(a: str, b: str) -> bool:
+    a, b = norm_title(a), norm_title(b)
+    if not a or not b:
+        return False
+    return a == b or (min(len(a), len(b)) >= 8 and (a.startswith(b) or b.startswith(a)))
+
+
+def classify(tag: str | None, status: str | None, recordings_json: str | None,
+             title: str | None = None, titles_json: str | None = None) -> tuple[str, list[dict]]:
     recs = [r for r in json.loads(recordings_json or "[]") if r["score"] >= MIN_SCORE]
     ids = {r["id"] for r in recs}
     if status is None:
@@ -35,22 +56,28 @@ def classify(tag: str | None, status: str | None, recordings_json: str | None) -
     if tag:
         if tag in ids:
             return "confirmed", recs
-        return ("mismatch" if recs else "unverifiable"), recs
+        if not recs:
+            return "unverifiable", recs
+        titles = json.loads(titles_json or "{}")
+        if title and any(titles_agree(title, titles[i]["title"]) for i in ids if i in titles):
+            return "alt_recording", recs
+        return "mismatch", recs
     return ("suggest" if recs else "unknown"), recs
 
 
 def run(conn: sqlite3.Connection, top: int = 10) -> dict:
+    migrate(conn)
     conn.executescript(SCHEMA)
     conn.execute("DELETE FROM verify")
     rows = conn.execute("""
-        SELECT f.id, NULLIF(f.mb_trackid, '') AS tag, a.status, a.recordings
+        SELECT f.id, NULLIF(f.mb_trackid, '') AS tag, f.title, a.status, a.recordings, a.titles
         FROM files f
         LEFT JOIN acoustid_lookups a
           ON a.fingerprint = f.fingerprint AND a.fp_duration = f.fp_duration
     """).fetchall()
     out = []
     for r in rows:
-        verdict, recs = classify(r["tag"], r["status"], r["recordings"])
+        verdict, recs = classify(r["tag"], r["status"], r["recordings"], r["title"], r["titles"])
         best = recs[0] if recs else None
         out.append((r["id"], verdict, r["tag"], best and best["id"], best and best["score"],
                     json.dumps([x["id"] for x in recs])))
