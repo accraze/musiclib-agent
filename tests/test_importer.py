@@ -124,7 +124,7 @@ def test_apply_import_uses_pinned_release_and_d12_layout(env, monkeypatch):
         tracks = [TrackInfo(title=f"Real Title {i}", track_id=f"rec-{i}", index=i, medium=1,
                             medium_index=i, medium_total=3, length=2.0) for i in (1, 2, 3)]
         info = AlbumInfo(tracks=tracks, album="Real Album", album_id="rel-1", artist="Real Band",
-                         artist_id="art-1", year=1999, mediums=1)
+                         artist_id="art-1", year=2012, original_year=1999, mediums=1)
         items = sorted(items, key=lambda it: it.path)
         m = AlbumMatch(Distance(), info, dict(zip(items, tracks)), [], [])
         return "Some Band", "Demo", Proposal([m], Recommendation.strong)
@@ -138,9 +138,11 @@ def test_apply_import_uses_pinned_release_and_d12_layout(env, monkeypatch):
 
     assert res["imported"] == 1
     assert _snapshot(cfg.source_dir) == before
-    album_dir = cfg.library_dir / "Real Band" / "1999 - Real Album"
+    album_dir = cfg.library_dir / "Real Band" / "1999 - Real Album"  # D17: original year
     names = sorted(p.name for p in album_dir.iterdir() if p.suffix in (".mp3", ".flac"))
     assert names == ["01 Real Title 1.mp3", "02 Real Title 2.mp3", "03 Real Title 3.flac"]
-    assert EasyID3(album_dir / "01 Real Title 1.mp3")["musicbrainz_albumid"] == ["rel-1"]
+    tags = EasyID3(album_dir / "01 Real Title 1.mp3")
+    assert tags["musicbrainz_albumid"] == ["rel-1"]
+    assert tags["date"][0].startswith("2012")                         # tags keep the reissue date
     # The dump copy keeps its original tags.
     assert EasyID3(cfg.source_dir / "Some Band - Demo/01 Song 1.mp3")["title"] == ["Song 1"]

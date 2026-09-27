@@ -53,8 +53,9 @@ def migrate(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE matches ADD COLUMN {col} {typ}")
 
 
-def select(conn: sqlite3.Connection, which: str, limit: int | None = None) -> list[dict]:
-    """Albums ready to import. which: auto | unsorted | approved."""
+def select(conn: sqlite3.Connection, which: str, limit: int | None = None,
+           albums: list[str] | None = None) -> list[dict]:
+    """Albums ready to import. which: auto | unsorted | approved; `albums` narrows to album keys."""
     where = {
         "auto": "m.action = 'auto' AND m.decision IS NULL",
         "unsorted": "(m.action = 'unsorted' AND m.decision IS NULL) OR m.decision = 'asis'",
@@ -63,6 +64,8 @@ def select(conn: sqlite3.Connection, which: str, limit: int | None = None) -> li
     rows = conn.execute(f"""
         SELECT m.* FROM matches m LEFT JOIN imports i ON i.match_id = m.id AND i.status = 'imported'
         WHERE ({where}) AND i.match_id IS NULL ORDER BY m.album_key""").fetchall()
+    if albums:
+        rows = [r for r in rows if r["album_key"] in set(albums)]
     out = []
     for r in rows[:limit]:
         r = dict(r)
@@ -74,8 +77,9 @@ def select(conn: sqlite3.Connection, which: str, limit: int | None = None) -> li
     return out
 
 
-def plan(conn: sqlite3.Connection, source: Path, which: str, limit: int | None = None) -> dict:
-    albums = select(conn, which, limit)
+def plan(conn: sqlite3.Connection, source: Path, which: str, limit: int | None = None,
+         only: list[str] | None = None) -> dict:
+    albums = select(conn, which, limit, only)
     total = 0
     items = []
     for a in albums:
@@ -203,17 +207,17 @@ def open_library():
 
 
 def run(conn: sqlite3.Connection, source: Path, staging_root: Path, which: str, *,
-        limit: int | None = None, progress=sys.stderr) -> dict:
+        limit: int | None = None, only: list[str] | None = None, progress=sys.stderr) -> dict:
     """Import for real. Callers must have run beetsenv.setup()."""
     import beets
 
     migrate(conn)
     lib = open_library()
     library_dir = Path(beets.config["directory"].as_filename())
-    albums = select(conn, which, limit)
+    albums = select(conn, which, limit, only)
     run_id = conn.execute(
         "INSERT INTO runs (command, args, started_at, status) VALUES ('import', ?, ?, 'running')",
-        (json.dumps({"which": which, "limit": limit}), now())).lastrowid
+        (json.dumps({"which": which, "limit": limit, "albums": only}), now())).lastrowid
     conn.commit()
     counts = {"imported": 0, "skipped": 0, "error": 0}
     print(f"import: {len(albums)} albums ({which})", file=progress, flush=True)

@@ -58,9 +58,10 @@ def cmd_import(cfg: config.Config, args) -> None:
     conn = db.connect(cfg.db_path)
     importer.migrate(conn)
     if not args.apply:
-        _emit(importer.plan(conn, cfg.source_dir, args.which, args.limit))
+        _emit(importer.plan(conn, cfg.source_dir, args.which, args.limit, args.album))
         return
-    _emit(importer.run(conn, cfg.source_dir, cfg.state_dir / "staging", args.which, limit=args.limit))
+    _emit(importer.run(conn, cfg.source_dir, cfg.state_dir / "staging", args.which,
+                       limit=args.limit, only=args.album))
 
 
 def cmd_report(cfg: config.Config, args) -> None:
@@ -106,6 +107,7 @@ def main(argv: list[str] | None = None) -> None:
     imp.add_argument("--which", choices=["auto", "unsorted", "approved"], default="auto",
                      help="auto: strong matches; unsorted: no match, as-is (D13); approved: reviewed")
     imp.add_argument("--limit", type=int, help="import at most N albums")
+    imp.add_argument("--album", action="append", help="only this album key (repeatable)")
     imp.add_argument("--apply", action="store_true", help="actually copy files into the library")
     imp.set_defaults(func=cmd_import)
 
