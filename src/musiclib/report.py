@@ -1,6 +1,8 @@
 """Summaries over the inventory. Read-only on everything."""
 
+import json
 import sqlite3
+from collections import Counter
 
 
 def _rows(conn: sqlite3.Connection, sql: str, *args) -> list[dict]:
@@ -87,3 +89,41 @@ def inventory_summary(conn: sqlite3.Connection, top: int = 10) -> dict:
             SELECT ext, COUNT(*) AS files, SUM(size) AS bytes FROM other_files
             GROUP BY ext ORDER BY files DESC LIMIT 25"""),
     }
+
+
+def not_imported(conn: sqlite3.Connection) -> tuple[dict, list[dict]]:
+    """D18: every dump audio file with where it went, or why it wasn't imported.
+
+    Statuses: imported, duplicate (dropped; keeper named), review, error, pending (matched
+    and ready, not imported yet), unmatched (not in any album, e.g. loose root files).
+    """
+    status: dict[str, tuple[str, str | None]] = {}
+    for r in conn.execute("SELECT source_path, dest_path FROM audit_log WHERE action LIKE 'import%'"):
+        status[r[0]] = ("imported", r[1])
+    have = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    if "matches" in have:
+        imported = set()
+        if "imports" in have:
+            imported = {r[0] for r in conn.execute("SELECT match_id FROM imports WHERE status = 'imported'")}
+        for m in conn.execute("SELECT id, action, note, files FROM matches"):
+            for f in json.loads(m["files"]):
+                if f not in status:
+                    kind = {"auto": "pending", "unsorted": "pending"}.get(m["action"], m["action"])
+                    if m["id"] in imported:
+                        kind = "imported"
+                    status[f] = (kind, m["note"])
+    if "dupe_groups" in have:
+        for r in conn.execute("""
+            SELECT g.scope, g.keeper, g.reason, m.path FROM dupe_groups g
+            JOIN dupe_members m ON m.group_id = g.id WHERE g.action = 'auto' AND m.role = 'drop'"""):
+            files = [r["path"]] if r["scope"] == "file" else [
+                p[0] for p in conn.execute("SELECT path FROM files WHERE path LIKE ? || '%'", (r["path"],))]
+            for f in files:
+                if f not in status or status[f][0] != "imported":
+                    status[f] = ("duplicate", f"{r['reason']}; kept {r['keeper']}")
+    rows = []
+    for (path,) in conn.execute("SELECT path FROM files ORDER BY path"):
+        kind, detail = status.get(path, ("unmatched", None))
+        rows.append({"path": path, "status": kind, "detail": detail})
+    counts = dict(sorted(Counter(r["status"] for r in rows).items()))
+    return {"files": len(rows), "by_status": counts}, rows

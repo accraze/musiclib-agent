@@ -107,3 +107,18 @@ def test_disc_folders_both_kept_over_worse_combined_copy(tmp_path):
     roles = {m["path"]: m["role"] for m in conn.execute("SELECT path, role FROM dupe_members")}
     assert roles == {"Box CD1/": "keep", "Box CD2/": "keep", "Box/": "drop"}
     assert g["action"] == "auto"
+
+
+def test_not_imported_report_names_keeper_for_dropped_copies(tmp_path):
+    from musiclib import report
+
+    conn = setup(tmp_path)
+    for i in range(3):
+        add(conn, f"FLAC/{i}.flac", f"t{i}", lossless=1)
+        add(conn, f"MP3/{i}.mp3", f"t{i}")
+    add(conn, "loose.mp3", "solo")
+    run(conn)
+    summary, rows = report.not_imported(conn)
+    assert summary["by_status"] == {"duplicate": 3, "unmatched": 4}
+    dup = next(r for r in rows if r["path"] == "MP3/0.mp3")
+    assert "kept FLAC/" in dup["detail"]

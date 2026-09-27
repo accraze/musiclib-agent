@@ -66,7 +66,19 @@ def cmd_import(cfg: config.Config, args) -> None:
 
 def cmd_report(cfg: config.Config, args) -> None:
     conn = db.connect(cfg.db_path)
+    if args.not_imported:
+        summary, rows = report.not_imported(conn)
+        cfg.reports_dir.mkdir(parents=True, exist_ok=True)
+        out = cfg.reports_dir / f"not-imported-{report_date()}.json"
+        out.write_text(json.dumps(rows, indent=1, ensure_ascii=False))
+        _emit({**summary, "written": str(out)})
+        return
     _emit(report.inventory_summary(conn, top=args.top))
+
+
+def report_date() -> str:
+    from datetime import date
+    return date.today().isoformat()
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -113,6 +125,8 @@ def main(argv: list[str] | None = None) -> None:
 
     rep = sub.add_parser("report", help="summarize the inventory as JSON")
     rep.add_argument("--top", type=int, default=10, help="examples per section")
+    rep.add_argument("--not-imported", action="store_true",
+                     help="D18: status of every dump file; writes state/reports/not-imported-<date>.json")
     rep.set_defaults(func=cmd_report)
 
     args = p.parse_args(argv)
