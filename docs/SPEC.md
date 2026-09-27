@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-09-26 (doc rev 44)
+Last synced: 2026-09-27 (doc rev 49)
 -->
 
 # Music Library Agent — Spec
@@ -57,7 +57,7 @@ Nothing irreversible happens without an explicit human step. These rules overrid
 
 1. **The source dump is read-only.** The tools never write tags to, move or delete anything in it.
 2. **Copy, don't move.** Beets imports with `copy: yes` into a separate library root.
-3. **Quarantine, don't delete.** Losing duplicates go to `quarantine/<date>/` with a manifest. Only you empty it.
+3. **Nothing leaves the dump.** Losing duplicates are simply not imported, and the not-imported report lists every dump file and why (D18). Only you delete the dump.
 4. **Dry run first.** Every mutating `musiclib` subcommand prints its plan and needs `--apply` to make changes.
 5. **Log everything.** Each change writes a row to the audit log: timestamp, action, source path, destination path, reason, and who decided (auto, agent or you).
 6. **Confidence gates.** Only matches above the auto threshold import without review. Everything else goes to the review queue.
@@ -196,6 +196,7 @@ Duplicates can free 8.7 GB, about 1.5% of the dump. 5.1 GB of that can be remove
 
 - **Unsorted is empty so far:** beets almost always returns *some* candidate, so no album had zero candidates. The 398 albums whose best candidate is at distance 0.5 or worse are effectively unmatched. M4 should route them to Unsorted/ after a glance.
 - **The 4 errors** are unreadable files, for example the Alvarius B *Blood Operatives* folder.
+- **Test import (2026-09-27):** 5 albums, 60 files, 1.3 GB: Baroness (2 discs), Cambodian Rocks (compilation), Traffic (FLAC), Nina Simone (1965 original of a 2012 reissue) and Merzbow. All 102 source files were unchanged afterwards (size, mtime, SHA-256). Layout, MusicBrainz tags, embedded art and the audit log were all correct.
 
 ## Open questions
 
@@ -216,9 +217,9 @@ Every design decision is recorded here, newest first. To reverse one, mark it Su
 
 | # | Date | Decision | Rationale | Status |
 | --- | --- | --- | --- | --- |
-| D18 | 2026-09-26 | Quarantine is a manifest, not a folder: nothing is ever moved out of the dump. Losing duplicates are simply not imported and are listed, with reasons, in a not-imported report. You archive or delete the dump yourself once the library checks out. | Safety rule 1 (dump is read-only) makes a physical quarantine impossible; the dump itself is the backup. Clarifies safety rule 3. | Proposed |
-| D17 | 2026-09-26 | Use the original release year in folder names: the path uses $original_year, falling back to $year. For example 1965 - Pastel Blues, not 2012 - Pastel Blues for a 2012 reissue. | Matches often land on reissues; the original year sorts discographies correctly. Only the path changes; tags keep the matched release's own date, unlike beets' original_date option. | Proposed |
-| D16 | 2026-09-25 | Import in two steps: musiclib match runs beets matching (tag_album) as a read-only dry run and records a verdict and candidates per album; musiclib import then copies each approved album with its chosen release pinned | beets has no real dry run; this makes safety rule 4 concrete, gives the review agent ranked candidates and penalties, and makes imports deterministic | Proposed |
+| D18 | 2026-09-26 | Quarantine is a manifest, not a folder: nothing is ever moved out of the dump. Losing duplicates are simply not imported and are listed, with reasons, in a not-imported report. You archive or delete the dump yourself once the library checks out. | Safety rule 1 (dump is read-only) makes a physical quarantine impossible; the dump itself is the backup. Clarifies safety rule 3. | Accepted |
+| D17 | 2026-09-26 | Use the original release year in folder names: the path uses $original_year, falling back to $year. For example 1965 - Pastel Blues, not 2012 - Pastel Blues for a 2012 reissue. | Matches often land on reissues; the original year sorts discographies correctly. Only the path changes; tags keep the matched release's own date, unlike beets' original_date option. | Accepted |
+| D16 | 2026-09-25 | Import in two steps: musiclib match runs beets matching (tag_album) as a read-only dry run and records a verdict and candidates per album; musiclib import then copies each approved album with its chosen release pinned | beets has no real dry run; this makes safety rule 4 concrete, gives the review agent ranked candidates and penalties, and makes imports deterministic | Accepted |
 | D15 | 2026-09-25 | Auto-import only on a beets strong match (distance ≤ 0.04, the default); weaker matches go to the review queue | When in doubt, ask; the default is well tested | Accepted |
 | D14 | 2026-09-25 | Duplicates are judged per folder by AcoustID track identity: a folder is a duplicate only if 90% or more of its tracks are in another folder; albums and compilations that share a few tracks are both kept | Most duplicates are whole album copies; audio identity survives bad tags; removing one track from a compilation would break it | Accepted |
 | D13 | 2026-09-25 | Albums with no MusicBrainz match import as-is into Unsorted/ with tags untouched | Keeps the review queue for decisions that matter; Unsorted/ can be re-matched later | Accepted |
