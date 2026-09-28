@@ -64,6 +64,19 @@ def cmd_import(cfg: config.Config, args) -> None:
                        limit=args.limit, only=args.album))
 
 
+def cmd_review(cfg: config.Config, args) -> None:
+    from . import review
+
+    conn = db.connect(cfg.db_path)
+    if args.review_cmd == "stats":
+        _emit(review.stats(conn))
+    elif args.review_cmd == "list":
+        _emit(review.listing(conn, args.kind, args.limit, args.offset))
+    else:
+        data = json.load(sys.stdin if args.file == "-" else open(args.file))
+        _emit(review.decide(conn, data, args.by))
+
+
 def cmd_report(cfg: config.Config, args) -> None:
     conn = db.connect(cfg.db_path)
     if args.not_imported:
@@ -122,6 +135,19 @@ def main(argv: list[str] | None = None) -> None:
     imp.add_argument("--album", action="append", help="only this album key (repeatable)")
     imp.add_argument("--apply", action="store_true", help="actually copy files into the library")
     imp.set_defaults(func=cmd_import)
+
+    rev = sub.add_parser("review", help="M4 review queue: stats, list batches, record decisions")
+    rsub = rev.add_subparsers(dest="review_cmd", required=True)
+    rsub.add_parser("stats", help="open/decided counts per kind")
+    rl = rsub.add_parser("list", help="a batch of albums with context and a suggestion")
+    rl.add_argument("--kind", choices=["close", "weak", "none", "dupe", "error"], default="close")
+    rl.add_argument("--limit", type=int, default=20)
+    rl.add_argument("--offset", type=int, default=0)
+    rd = rsub.add_parser("decide", help="record a user-approved batch of decisions (JSON list)")
+    rd.add_argument("--file", default="-", help="JSON file, or - for stdin")
+    rd.add_argument("--by", choices=["agent", "user"], required=True,
+                    help="agent: agent proposed, user approved the batch; user: user decided directly")
+    rev.set_defaults(func=cmd_review)
 
     rep = sub.add_parser("report", help="summarize the inventory as JSON")
     rep.add_argument("--top", type=int, default=10, help="examples per section")

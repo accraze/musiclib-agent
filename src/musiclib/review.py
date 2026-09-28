@@ -1,0 +1,143 @@
+"""M4: the review queue. The agent reads batches with context, proposes decisions, and
+records them only after the user approves the batch (SPEC safety rule 7).
+
+Kinds (albums with action 'review' or 'error' and no decision yet):
+  close  best candidate distance < 0.1
+  weak   0.1 <= distance < 0.5
+  none   distance >= 0.5 or no candidate: effectively unmatched (D13 Unsorted/)
+  dupe   waiting on a duplicate review group
+  error  unreadable files
+
+Decisions: approve (import with a release pinned), asis (Unsorted/, D13), skip (leave out).
+"""
+
+import json
+import sqlite3
+from collections import Counter
+from datetime import datetime, timezone
+
+from .importer import migrate
+from .verify import SCHEMA as VERIFY_SCHEMA
+
+KIND_SQL = {
+    "close": "m.action = 'review' AND m.note IS NULL AND m.distance < 0.1",
+    "weak": "m.action = 'review' AND m.note IS NULL AND m.distance >= 0.1 AND m.distance < 0.5",
+    "none": "m.action = 'review' AND m.note IS NULL AND (m.distance >= 0.5 OR m.distance IS NULL)",
+    "dupe": "m.action = 'review' AND m.note LIKE '%duplicate review%'",
+    "error": "m.action = 'error'",
+}
+# Penalties that don't question *which* release it is: naming, dates, pressing details.
+COSMETIC = {"artist", "album", "year", "country", "media", "label", "catalognum",
+            "albumdisambig", "albumstatus", "mediums", "tracks", "track_title", "track_artist"}
+DECISIONS = {"approve", "asis", "skip"}
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def suggest(kind: str, cands: list[dict]) -> tuple[str, str]:
+    """A starting point for the agent, never applied on its own."""
+    if kind == "none":
+        return "asis", "no candidate closer than 0.5"
+    if kind == "error":
+        return "skip", "unreadable files"
+    if not cands:
+        return "asis", "no candidates"
+    best = cands[0]
+    gap = (cands[1]["distance"] - best["distance"]) if len(cands) > 1 else 1.0
+    penalties = set(best["penalties"])
+    if (kind == "close" and gap >= 0.15 and penalties <= COSMETIC
+            and not best["extra_items"] and not best["extra_tracks"]):
+        return "approve", f"clear winner (gap {gap:.2f}), cosmetic penalties only: {sorted(penalties)}"
+    reasons = []
+    if best["extra_items"]:
+        reasons.append(f"{best['extra_items']} of our files don't fit the release")
+    if best["extra_tracks"]:
+        reasons.append(f"release has {best['extra_tracks']} tracks we lack")
+    if gap < 0.15:
+        reasons.append(f"runner-up is close (gap {gap:.2f})")
+    if penalties - COSMETIC:
+        reasons.append(f"structural penalties {sorted(penalties - COSMETIC)}")
+    return "look", "; ".join(reasons) or "weak match"
+
+
+def _local(conn: sqlite3.Connection, files: list[str]) -> dict:
+    """What the files themselves say, plus the M2 fingerprint verdicts."""
+    marks = ",".join("?" * len(files))
+    rows = conn.execute(f"""
+        SELECT f.path, f.artist, f.albumartist, f.album, f.title, f.date, f.codec, f.bitrate,
+               f.duration, v.verdict
+        FROM files f LEFT JOIN verify v ON v.file_id = f.id WHERE f.path IN ({marks})""", files).fetchall()
+
+    def top(field):
+        c = Counter(r[field] for r in rows if r[field])
+        return c.most_common(1)[0][0] if c else None
+
+    return {
+        "artist": top("albumartist") or top("artist"), "album": top("album"), "date": top("date"),
+        "codec": top("codec"), "minutes": round(sum(r["duration"] or 0 for r in rows) / 60, 1),
+        "verify": dict(Counter(r["verdict"] or "none" for r in rows)),
+        "sample": [{"file": r["path"].rsplit("/", 1)[-1], "title": r["title"]} for r in rows[:8]],
+    }
+
+
+def listing(conn: sqlite3.Connection, kind: str, limit: int = 20, offset: int = 0) -> dict:
+    migrate(conn)
+    conn.executescript(VERIFY_SCHEMA)
+    rows = conn.execute(f"""
+        SELECT m.* FROM matches m WHERE ({KIND_SQL[kind]}) AND m.decision IS NULL
+        ORDER BY m.distance, m.album_key LIMIT ? OFFSET ?""", (limit, offset)).fetchall()
+    total = conn.execute(
+        f"SELECT COUNT(*) FROM matches m WHERE ({KIND_SQL[kind]}) AND m.decision IS NULL").fetchone()[0]
+    albums = []
+    for m in rows:
+        cands = json.loads(m["candidates"] or "[]")
+        action, why = suggest(kind, cands)
+        albums.append({"album_key": m["album_key"], "files": len(json.loads(m["files"])),
+                       "local": _local(conn, json.loads(m["files"])), "candidates": cands,
+                       "note": m["note"], "suggest": action, "why": why})
+    return {"kind": kind, "remaining": total, "offset": offset, "albums": albums}
+
+
+def stats(conn: sqlite3.Connection) -> dict:
+    migrate(conn)
+    out = {}
+    for kind, where in KIND_SQL.items():
+        r = conn.execute(f"""SELECT COUNT(*) AS total, SUM(m.decision IS NULL) AS open,
+                             SUM(m.decision = 'approve') AS approve, SUM(m.decision = 'asis') AS asis,
+                             SUM(m.decision = 'skip') AS skip FROM matches m WHERE {where}""").fetchone()
+        out[kind] = {k: r[k] or 0 for k in r.keys()}
+    return out
+
+
+def decide(conn: sqlite3.Connection, decisions: list[dict], decided_by: str) -> dict:
+    """Record a batch. Each: {album_key, decision, album_id?, reason}. All-or-nothing."""
+    migrate(conn)
+    if decided_by not in ("agent", "user"):
+        raise SystemExit("decided_by must be 'agent' or 'user'")
+    rows = []
+    for d in decisions:
+        key, decision = d.get("album_key"), d.get("decision")
+        if decision not in DECISIONS:
+            raise SystemExit(f"{key}: decision must be one of {sorted(DECISIONS)}")
+        m = conn.execute("SELECT id, album_id, candidates FROM matches WHERE album_key = ?", (key,)).fetchone()
+        if m is None:
+            raise SystemExit(f"unknown album_key: {key}")
+        if conn.execute("SELECT 1 FROM imports WHERE match_id = ? AND status = 'imported'", (m["id"],)).fetchone():
+            raise SystemExit(f"{key}: already imported")
+        album_id = d.get("album_id") or (m["album_id"] if decision == "approve" else None)
+        if decision == "approve" and not album_id:
+            raise SystemExit(f"{key}: approve needs an album_id (no candidate to default to)")
+        if not d.get("reason"):
+            raise SystemExit(f"{key}: every decision needs a reason")
+        rows.append((m["id"], key, decision, album_id, d["reason"]))
+    with conn:
+        for mid, key, decision, album_id, reason in rows:
+            conn.execute("UPDATE matches SET decision = ?, decided_album_id = ?, decided_by = ? WHERE id = ?",
+                         (decision, album_id, decided_by, mid))
+            conn.execute("INSERT INTO audit_log (ts, action, source_path, reason, decided_by) "
+                         "VALUES (?, ?, ?, ?, ?)",
+                         (now(), f"decide_{decision}", key,
+                          reason + (f" (release {album_id})" if album_id else ""), decided_by))
+    return {"recorded": len(rows), **Counter(r[2] for r in rows)}
