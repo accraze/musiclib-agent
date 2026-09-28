@@ -199,12 +199,18 @@ def test_file_not_on_release_is_kept_in_album_folder_untouched(env, monkeypatch)
     assert extra["source_path"] == "Some Band - Demo/03 Song 3.wav" and "not on release rel-1" in extra["reason"]
 
 
-def test_damaged_extra_is_skipped(env):
+def test_damage_is_judged_by_decoding_not_by_scan_errors(env, monkeypatch):
     cfg, conn, importer = env
     conn.execute("INSERT INTO files (path, top_dir, ext, size, mtime, duration, error, scanned_at) VALUES "
-                 "('A/08 Song1.mp3', 'A', 'mp3', 1, 0, 410, 'fingerprint: Empty fingerprint', 'now'), "
-                 "('A/08 Song2.mp3', 'A', 'mp3', 1, 0, 460, NULL, 'now')")
-    why = importer.extra_skip_reason(conn, cfg.source_dir, "A/08 Song1.mp3", ["A/08 Song1.mp3", "A/08 Song2.mp3"])
+                 "('A/broken.mp3', 'A', 'mp3', 1, 0, 247, 'fingerprint: Empty fingerprint', 'now'), "
+                 "('A/playable.mp3', 'A', 'mp3', 1, 0, 183, 'fingerprint: Empty fingerprint', 'now'), "
+                 "('A/fine.mp3', 'A', 'mp3', 1, 0, 200, NULL, 'now')")
+    decoded = {"broken.mp3": 13.8, "playable.mp3": 228.8, "fine.mp3": 0.0}
+    monkeypatch.setattr(importer, "decodable_seconds", lambda p: decoded[p.name])
+    assert importer.is_damaged(conn, cfg.source_dir, "A/broken.mp3")
+    assert not importer.is_damaged(conn, cfg.source_dir, "A/playable.mp3")   # fpcalc failed, audio fine
+    assert not importer.is_damaged(conn, cfg.source_dir, "A/fine.mp3")       # no scan error: not checked
+    why = importer.extra_skip_reason(conn, cfg.source_dir, "A/broken.mp3", ["A/broken.mp3", "A/fine.mp3"])
     assert why.startswith("damaged")
 
 
@@ -213,3 +219,18 @@ def test_remove_from_library_refuses_paths_outside_it(env):
     with pytest.raises(SystemExit):
         importer.remove_from_library(conn, str(cfg.source_dir / "Some Band - Demo/01 Song 1.mp3"), "x", "user")
     assert (cfg.source_dir / "Some Band - Demo/01 Song 1.mp3").exists()
+
+
+def test_undecodable_file_never_reaches_the_library(env, monkeypatch):
+    cfg, conn, importer = env
+    monkeypatch.setattr(importer, "decodable_seconds", lambda p: 0.6)
+    conn.execute("INSERT INTO files (path, top_dir, ext, size, mtime, error, scanned_at) VALUES "
+                 "('Some Band - Demo/02 Song 2.mp3', 'x', 'mp3', 1, 0, 'fingerprint: Empty fingerprint', 'now')")
+    conn.execute("UPDATE files SET duration = 277 WHERE path = 'Some Band - Demo/02 Song 2.mp3'")
+    conn.commit()
+    res = importer.run(conn, cfg.source_dir, cfg.state_dir / "staging", "unsorted", progress=io.StringIO())
+    assert res["imported"] == 1
+    lib = cfg.library_dir / "Unsorted/Some Band - Demo"
+    assert sorted(p.name for p in lib.iterdir()) == ["01 Song 1.mp3", "03 Song 3.flac"]
+    row = conn.execute("SELECT reason FROM audit_log WHERE action = 'skip_extra'").fetchone()
+    assert row["reason"].startswith("damaged")

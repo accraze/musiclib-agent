@@ -56,7 +56,7 @@ hasn't approved (rule 7), every decision needs a reason.
 
 beets imports only files it maps to the release's tracks. `musiclib import` then puts the
 leftovers (bonus tracks, strays) in the album folder under their dump name, tags untouched,
-and skips music videos, whole-album single files and damaged files (D20). Say so in the table when an
+and skips music videos, whole-album single files and damaged files (less than half decodes; D20). A failed fingerprint alone is not damage: most such files play fine. Say so in the table when an
 album has `extra_items`, and name anything that looks like a video, a full-album file or
 a track from another album.
 

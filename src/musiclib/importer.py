@@ -191,6 +191,31 @@ def _free_path(dest: Path) -> Path:
 
 
 VIDEO_EXTS = {"mp4", "m4v", "mkv", "webm", "mov", "avi"}
+MIN_DECODABLE = 0.5  # a file is damaged if less than half its stated length decodes
+
+
+def decodable_seconds(path: Path) -> float:
+    """How much audio ffmpeg can actually decode (it reads through bad frames)."""
+    out = subprocess.run(["ffmpeg", "-nostdin", "-v", "info", "-i", str(path), "-f", "null", "-"],
+                         capture_output=True, text=True)
+    times = [t for t in out.stderr.replace("\r", "\n").split() if t.startswith("time=")]
+    if not times:
+        return 0.0
+    h, m, sec = times[-1][5:].split(":")
+    try:
+        return int(h) * 3600 + int(m) * 60 + float(sec)
+    except ValueError:
+        return 0.0
+
+
+def is_damaged(conn: sqlite3.Connection, source: Path, rel: str) -> bool:
+    """Only files that failed to scan are checked, by decoding them. fpcalc often fails on a
+    single bad header while the audio plays fine, so a scan error alone isn't damage."""
+    row = conn.execute("SELECT error, duration FROM files WHERE path = ?", (rel,)).fetchone()
+    if not row or not row[0]:
+        return False
+    expected = row[1] or 0
+    return decodable_seconds(source / rel) < MIN_DECODABLE * expected if expected else True
 
 
 def extra_skip_reason(conn: sqlite3.Connection, source: Path, rel: str, album_files: list[str]) -> str | None:
@@ -201,9 +226,8 @@ def extra_skip_reason(conn: sqlite3.Connection, source: Path, rel: str, album_fi
                                capture_output=True, text=True)
         if any(c not in ("mjpeg", "png") for c in probe.stdout.split()):
             return "video file, not audio"
-    err = conn.execute("SELECT error FROM files WHERE path = ?", (rel,)).fetchone()
-    if err and err[0]:
-        return "damaged file (failed to scan or fingerprint)"
+    if is_damaged(conn, source, rel):
+        return "damaged file: less than half of it decodes"
     marks = ",".join("?" * len(album_files))
     durs = dict(conn.execute(f"SELECT path, COALESCE(duration, 0) FROM files WHERE path IN ({marks})",
                              album_files).fetchall())
@@ -280,9 +304,11 @@ def run(conn: sqlite3.Connection, source: Path, staging_root: Path, which: str, 
         staging = staging_root / str(a["id"])
         files, dirs = json.loads(a["files"]), json.loads(a["dirs"])
         status, note, moved = "error", None, []
+        # Damaged files (less than half decodes) never reach beets, mapped or not.
+        damaged = [f for f in files if is_damaged(conn, source, f)]
         try:
-            mapping = stage(source, staging, files, dirs)
-            extras, skipped = [], []
+            mapping = stage(source, staging, [f for f in files if f not in damaged], dirs)
+            extras, skipped = [], [(f, "damaged file: less than half of it decodes") for f in damaged]
             if a["mode"] == "asis":
                 moved = import_asis(library_dir, mapping)
             else:
