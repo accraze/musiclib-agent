@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-09-28 (doc rev 54)
+Last synced: 2026-09-28 (doc rev 55)
 -->
 
 # Music Library Agent — Spec
@@ -214,6 +214,9 @@ The library holds 3,314 albums (37,859 audio files, 382 GB) at /srv/data/media/m
 - **Review batch 1** (18 close calls) was approved and imported.
 - **Fixed on the way (D19, D20):** duplicate copies *inside* one folder were not being caught, and beets silently leaves out files it can't place on the release. Both are fixed, with tests. The 13 affected albums were repaired from the dump.
 - **Removing in-folder duplicates** turned 12 review albums into strong matches, which were imported automatically.
+- **Review batches 2 and 3 (2026-09-28):** 37 more albums approved and imported; Moody Blues *Seventh Sojourn* skipped (the match was a DTS surround edition, but the files are stereo).
+- **Queue fix:** albums in any duplicate review group now wait in `dupe`. Before, the losing copy of an edition pair could appear as a close call. That imported Ike Quebec's *Heavy Soul* from a 192k copy instead of a 320k one; the library now holds the 320k copy.
+- **Damage is judged by decoding:** a failed fingerprint alone doesn't mean damage. 11 of 12 such files in the library play fully. Two truly broken tracks were removed from the library (Boards of Canada, 0.6 s of 4:37 decodes; Caetano Veloso, a truncated second copy); T. Rex *Scenescof Dynasty (take 4)* (14 s of 4:07) is pending.
 
 ## Open questions
 
@@ -234,7 +237,7 @@ Every design decision is recorded here, newest first. To reverse one, mark it Su
 
 | # | Date | Decision | Rationale | Status |
 | --- | --- | --- | --- | --- |
-| D20 | 2026-09-28 | Files beets can't place on the chosen release (bonus tracks, strays) go into the album folder under their dump name with tags untouched. Video files, whole-album single files and damaged files are skipped and listed as skipped in the not-imported report. | beets imports only mapped files, so 14 extra files were silently left out of 13 albums; bonus tracks belong with their album, but a music video or a 44-minute single-file copy of the album does not | Accepted |
+| D20 | 2026-09-28 | Files beets can't place on the chosen release (bonus tracks, strays) go into the album folder under their dump name with tags untouched. Video files, whole-album single files and damaged files (less than half the stated length decodes) are skipped and listed as skipped in the not-imported report. | beets imports only mapped files, so 14 extra files were silently left out of 13 albums; bonus tracks belong with their album, but a music video or a 44-minute single-file copy of the album does not | Accepted |
 | D19 | 2026-09-28 | A second copy inside one folder is a duplicate when AcoustID, the full title (parentheticals included) and length (within 2 s) match and the filename track numbers agree; if the numbers differ, it goes to review | Folder-level comparison missed in-folder copies (e.g. 02 First Communion and 02 First Communion 1). Alternate mixes share AcoustIDs, and a release can repeat a track on purpose (Cheer-Accident, The Why Album). | Proposed |
 | D18 | 2026-09-26 | Quarantine is a manifest, not a folder: nothing is ever moved out of the dump. Losing duplicates are simply not imported and are listed, with reasons, in a not-imported report. You archive or delete the dump yourself once the library checks out. | Safety rule 1 (dump is read-only) makes a physical quarantine impossible; the dump itself is the backup. Clarifies safety rule 3. | Accepted |
 | D17 | 2026-09-26 | Use the original release year in folder names: the path uses $original_year, falling back to $year. For example 1965 - Pastel Blues, not 2012 - Pastel Blues for a 2012 reissue. | Matches often land on reissues; the original year sorts discographies correctly. Only the path changes; tags keep the matched release's own date, unlike beets' original_date option. | Accepted |
