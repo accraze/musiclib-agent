@@ -8,6 +8,8 @@ Folders are compared by the identities they contain:
           same release or no release tags                            -> auto if the loser is
                                                                         fully covered, else review
   tier 3  same overlap, but tagged as different releases (editions)  -> review
+  tier 2  (file scope) two copies inside one folder: same AcoustID, same full title
+          (case-insensitive, parentheticals included), lengths within 2 s  -> auto
 
 Folders that share only a few tracks (album vs. compilation) are not duplicates.
 Keepers follow SPEC "Keeper ranking" (D6/D10).
@@ -100,7 +102,8 @@ class Folder:
 def _load(conn: sqlite3.Connection):
     rows = conn.execute("""
         SELECT f.id, f.path, f.size, f.sha256, f.lossless, COALESCE(f.bitrate, 0) AS bitrate,
-               f.has_art, NULLIF(f.mb_albumid, '') AS album, a.acoustid_id, v.verdict
+               f.has_art, NULLIF(f.mb_albumid, '') AS album, a.acoustid_id, v.verdict,
+               lower(trim(f.title)) AS title, f.duration
         FROM files f
         LEFT JOIN acoustid_lookups a ON a.fingerprint = f.fingerprint AND a.fp_duration = f.fp_duration
         LEFT JOIN verify v ON v.file_id = f.id
@@ -205,6 +208,9 @@ def find(conn: sqlite3.Connection) -> dict:
                        other.size, [(keeper.path, "keep", 1.0, keeper.stats()),
                                     (other.path, "drop", round(cov, 3), other.stats())]))
 
+    dropped_folders = {m[0] for g in groups if g[1] == "folder" for m in g[7] if m[1] == "drop"}
+    tier1_dropped = set()
+
     # Tier 1: identical bytes, skipping pairs already handled as whole folders above.
     by_hash = defaultdict(list)
     for r in rows:
@@ -216,8 +222,28 @@ def find(conn: sqlite3.Connection) -> dict:
             continue
         ranked = sorted(same, key=_file_rank, reverse=True)
         mem = [(ranked[0]["path"], "keep", 1.0, None)] + [(r["path"], "drop", 1.0, None) for r in ranked[1:]]
+        tier1_dropped.update(r["path"] for r in ranked[1:])
         groups.append((1, "file", "auto", "identical bytes", ranked[0]["path"], None,
                        sum(r["size"] for r in ranked[1:]), mem))
+
+    # Tier 2, file scope: a second copy of a track inside the same folder. Alternate mixes
+    # can share an AcoustID ("Dust" vs "Dust (Alternate Mix)"), so titles must match fully.
+    in_folder = defaultdict(list)
+    for r in rows:
+        d = _folder(r["path"])
+        if r["acoustid_id"] and r["title"] and d not in dropped_folders and r["path"] not in tier1_dropped:
+            in_folder[(d, r["acoustid_id"], r["title"])].append(r)
+    for same in in_folder.values():
+        if len(same) < 2:
+            continue
+        ranked = sorted(same, key=_file_rank, reverse=True)
+        keeper = ranked[0]
+        losers = [r for r in ranked[1:] if abs((r["duration"] or 0) - (keeper["duration"] or 0)) < 2]
+        if not losers:
+            continue
+        mem = [(keeper["path"], "keep", 1.0, None)] + [(r["path"], "drop", 1.0, None) for r in losers]
+        groups.append((2, "file", "auto", "second copy in the same folder", keeper["path"], None,
+                       sum(r["size"] for r in losers), mem))
 
     for tier, scope, action, reason, keeper, carry, reclaim, mem in groups:
         gid = conn.execute(

@@ -259,3 +259,33 @@ def run(conn: sqlite3.Connection, source: Path, staging_root: Path, which: str, 
     conn.execute("UPDATE runs SET finished_at = ?, status = 'ok' WHERE id = ?", (now(), run_id))
     conn.commit()
     return {"run_id": run_id, "which": which, **counts}
+
+
+def prune_duplicates(conn: sqlite3.Connection, *, apply: bool = False) -> dict:
+    """Remove library copies whose dump source was later marked a duplicate (auto file groups),
+    when the keeper's copy is in the library too. Library-only; the dump is never touched."""
+    rows = conn.execute("""
+        SELECT a.source_path, a.dest_path, g.keeper, g.reason FROM audit_log a
+        JOIN dupe_members m ON m.path = a.source_path AND m.role = 'drop'
+        JOIN dupe_groups g ON g.id = m.group_id AND g.scope = 'file' AND g.action = 'auto'
+        WHERE a.action LIKE 'import%'
+          AND EXISTS (SELECT 1 FROM audit_log k WHERE k.source_path = g.keeper AND k.action LIKE 'import%')
+    """).fetchall()
+    targets = [dict(r) for r in rows if Path(r["dest_path"]).exists()]
+    if not apply:
+        return {"dry_run": True, "would_remove": len(targets), "items": targets}
+    lib = open_library()
+    by_path = {os.fsdecode(i.path): i for i in lib.items()}
+    removed = 0
+    for t in targets:
+        item = by_path.get(t["dest_path"])
+        if item is not None:
+            item.remove(delete=True)
+        else:
+            Path(t["dest_path"]).unlink()
+        conn.execute("INSERT INTO audit_log (ts, action, source_path, dest_path, reason, decided_by) "
+                     "VALUES (?, 'prune_duplicate', ?, ?, ?, 'auto')",
+                     (now(), t["source_path"], t["dest_path"], f"{t['reason']}; kept {t['keeper']}"))
+        removed += 1
+    conn.commit()
+    return {"removed": removed}

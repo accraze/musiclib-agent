@@ -122,3 +122,28 @@ def test_not_imported_report_names_keeper_for_dropped_copies(tmp_path):
     assert summary["by_status"] == {"duplicate": 3, "unmatched": 4}
     dup = next(r for r in rows if r["path"] == "MP3/0.mp3")
     assert "kept FLAC/" in dup["detail"]
+
+
+def _title(conn, path, title, duration=200):
+    conn.execute("UPDATE files SET title = ?, duration = ? WHERE path = ?", (title, duration, path))
+
+
+def test_second_copy_in_same_folder_is_dropped(tmp_path):
+    conn = setup(tmp_path)
+    for i in range(3):
+        add(conn, f"Album/0{i} Song {i}.mp3", f"t{i}")
+        _title(conn, f"Album/0{i} Song {i}.mp3", f"Song {i}")
+    add(conn, "Album/01 Song 1 2.mp3", "t1")        # same audio, same title, copy name
+    _title(conn, "Album/01 Song 1 2.mp3", "song 1")
+    groups = run(conn)
+    [g] = [g for g in groups if g["scope"] == "file"]
+    assert (g["tier"], g["action"], g["keeper"]) == (2, "auto", "Album/01 Song 1.mp3")
+
+
+def test_alternate_mix_sharing_an_acoustid_is_kept(tmp_path):
+    conn = setup(tmp_path)
+    add(conn, "Box/07 Dust.mp3", "dust")
+    _title(conn, "Box/07 Dust.mp3", "Dust")
+    add(conn, "Box/12 Dust (Alternate Mix).mp3", "dust")
+    _title(conn, "Box/12 Dust (Alternate Mix).mp3", "Dust (Alternate Mix)")
+    assert run(conn) == []

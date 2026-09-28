@@ -57,6 +57,9 @@ def cmd_import(cfg: config.Config, args) -> None:
 
     conn = db.connect(cfg.db_path)
     importer.migrate(conn)
+    if args.prune_duplicates:
+        _emit(importer.prune_duplicates(conn, apply=args.apply))
+        return
     if not args.apply:
         _emit(importer.plan(conn, cfg.source_dir, args.which, args.limit, args.album))
         return
@@ -134,6 +137,8 @@ def main(argv: list[str] | None = None) -> None:
     imp.add_argument("--limit", type=int, help="import at most N albums")
     imp.add_argument("--album", action="append", help="only this album key (repeatable)")
     imp.add_argument("--apply", action="store_true", help="actually copy files into the library")
+    imp.add_argument("--prune-duplicates", action="store_true",
+                     help="remove library copies of files later found to be duplicates (with --apply)")
     imp.set_defaults(func=cmd_import)
 
     rev = sub.add_parser("review", help="M4 review queue: stats, list batches, record decisions")

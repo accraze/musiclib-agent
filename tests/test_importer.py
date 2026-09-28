@@ -146,3 +146,25 @@ def test_apply_import_uses_pinned_release_and_d12_layout(env, monkeypatch):
     assert tags["date"][0].startswith("2012")                         # tags keep the reissue date
     # The dump copy keeps its original tags.
     assert EasyID3(cfg.source_dir / "Some Band - Demo/01 Song 1.mp3")["title"] == ["Song 1"]
+
+
+def test_prune_removes_library_copy_of_a_later_found_duplicate(env):
+    cfg, conn, importer = env
+    from musiclib import dupes
+
+    importer.run(conn, cfg.source_dir, cfg.state_dir / "staging", "unsorted", progress=io.StringIO())
+    # Pretend dupes later found 02 to be a second copy of 01.
+    conn.executescript(dupes.SCHEMA)
+    gid = conn.execute("INSERT INTO dupe_groups (tier, scope, action, reason, keeper, reclaimable) VALUES "
+                       "(2, 'file', 'auto', 'second copy in the same folder', "
+                       "'Some Band - Demo/01 Song 1.mp3', 1)").lastrowid
+    conn.executemany("INSERT INTO dupe_members (group_id, path, role) VALUES (?, ?, ?)",
+                     [(gid, "Some Band - Demo/01 Song 1.mp3", "keep"), (gid, "Some Band - Demo/02 Song 2.mp3", "drop")])
+    conn.commit()
+    before = _snapshot(cfg.source_dir)
+    assert importer.prune_duplicates(conn)["would_remove"] == 1
+    assert importer.prune_duplicates(conn, apply=True)["removed"] == 1
+    lib = cfg.library_dir / "Unsorted/Some Band - Demo"
+    assert sorted(p.name for p in lib.iterdir()) == ["01 Song 1.mp3", "03 Song 3.flac"]
+    assert _snapshot(cfg.source_dir) == before
+    assert conn.execute("SELECT COUNT(*) FROM audit_log WHERE action = 'prune_duplicate'").fetchone()[0] == 1
