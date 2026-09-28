@@ -168,3 +168,32 @@ def test_prune_removes_library_copy_of_a_later_found_duplicate(env):
     assert sorted(p.name for p in lib.iterdir()) == ["01 Song 1.mp3", "03 Song 3.flac"]
     assert _snapshot(cfg.source_dir) == before
     assert conn.execute("SELECT COUNT(*) FROM audit_log WHERE action = 'prune_duplicate'").fetchone()[0] == 1
+
+
+def test_file_not_on_release_is_kept_in_album_folder_untouched(env, monkeypatch):
+    cfg, conn, importer = env
+    from beets.autotag import AlbumInfo, AlbumMatch, TrackInfo
+    from beets.autotag.distance import Distance
+    from beets.autotag.match import Proposal, Recommendation
+    import beets.importer.tasks as tasks
+
+    def fake_tag_album(items, search_ids=()):
+        tracks = [TrackInfo(title=f"Real Title {i}", track_id=f"rec-{i}", index=i, medium=1,
+                            medium_index=i, medium_total=2, length=2.0) for i in (1, 2)]
+        info = AlbumInfo(tracks=tracks, album="Real Album", album_id="rel-1", artist="Real Band",
+                         artist_id="art-1", year=1999, mediums=1)
+        items = sorted(items, key=lambda it: it.path)
+        m = AlbumMatch(Distance(), info, dict(zip(items[:2], tracks)), items[2:], [])
+        return "Some Band", "Demo", Proposal([m], Recommendation.medium)
+
+    monkeypatch.setattr(tasks.autotag, "tag_album", fake_tag_album)
+    conn.execute("UPDATE matches SET action = 'review', decision = 'approve', decided_album_id = 'rel-1', "
+                 "decided_by = 'agent'")
+    conn.commit()
+    res = importer.run(conn, cfg.source_dir, cfg.state_dir / "staging", "approved", progress=io.StringIO())
+    assert res["imported"] == 1
+    album_dir = cfg.library_dir / "Real Band" / "1999 - Real Album"
+    names = sorted(p.name for p in album_dir.iterdir() if p.suffix in (".mp3", ".flac"))
+    assert names == ["01 Real Title 1.mp3", "02 Real Title 2.mp3", "03 Song 3.flac"]
+    extra = conn.execute("SELECT source_path, reason FROM audit_log WHERE action = 'import_extra'").fetchone()
+    assert extra["source_path"] == "Some Band - Demo/03 Song 3.wav" and "not on release rel-1" in extra["reason"]

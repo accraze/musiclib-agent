@@ -94,12 +94,15 @@ def inventory_summary(conn: sqlite3.Connection, top: int = 10) -> dict:
 def not_imported(conn: sqlite3.Connection) -> tuple[dict, list[dict]]:
     """D18: every dump audio file with where it went, or why it wasn't imported.
 
-    Statuses: imported, duplicate (dropped; keeper named), review, error, pending (matched
-    and ready, not imported yet), unmatched (not in any album, e.g. loose root files).
+    Statuses: imported, duplicate (dropped; keeper named), skipped (e.g. a music video found
+    in an album folder), review, error, pending (matched and ready, not imported yet),
+    unmatched (not in any album, e.g. loose root files).
     """
     status: dict[str, tuple[str, str | None]] = {}
     for r in conn.execute("SELECT source_path, dest_path FROM audit_log WHERE action LIKE 'import%'"):
         status[r[0]] = ("imported", r[1])
+    for r in conn.execute("SELECT source_path, reason FROM audit_log WHERE action = 'skip_extra'"):
+        status[r[0]] = ("skipped", r[1])
     have = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     if "matches" in have:
         imported = set()

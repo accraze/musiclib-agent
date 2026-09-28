@@ -181,6 +181,57 @@ def import_album(lib, staging: Path, pin: str) -> tuple[list[tuple[str, str]], s
     return moved, session.note
 
 
+def _free_path(dest: Path) -> Path:
+    n = 2
+    base = dest
+    while dest.exists():
+        dest = base.with_stem(f"{base.stem} ({n})")
+        n += 1
+    return dest
+
+
+VIDEO_EXTS = {"mp4", "m4v", "mkv", "webm", "mov", "avi"}
+
+
+def extra_skip_reason(conn: sqlite3.Connection, source: Path, rel: str, album_files: list[str]) -> str | None:
+    """Why an unmapped file shouldn't go into the album folder, or None to keep it."""
+    if rel.rsplit(".", 1)[-1].lower() in VIDEO_EXTS:
+        probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries",
+                                "stream=codec_name", "-of", "csv=p=0", str(source / rel)],
+                               capture_output=True, text=True)
+        if any(c not in ("mjpeg", "png") for c in probe.stdout.split()):
+            return "video file, not audio"
+    marks = ",".join("?" * len(album_files))
+    durs = dict(conn.execute(f"SELECT path, COALESCE(duration, 0) FROM files WHERE path IN ({marks})",
+                             album_files).fetchall())
+    others = sum(d for f, d in durs.items() if f != rel)
+    if others and durs.get(rel, 0) >= 0.8 * others:
+        return "whole album as one file; the split tracks were imported"
+    return None
+
+
+def _skip_rows(run_id, skipped, decided_by):
+    return [(now(), run_id, "skip_extra", rel, None, why, decided_by) for rel, why in skipped]
+
+
+def place_extras(album_dir: Path, files: list[tuple[Path, str]], *, move: bool) -> list[tuple[str, str]]:
+    """Files beets didn't map to the release (bonus tracks, strays) go into the album folder
+    under their dump file name, tags untouched. beets itself only imports mapped files."""
+    placed = []
+    for src, rel in files:
+        dest = _free_path(album_dir / (Path(rel).stem + src.suffix))
+        if src.suffix.lower() == ".wav":  # only when copying straight from the dump (D7)
+            dest = _free_path(dest.with_suffix(".flac"))
+            subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-i", str(src), "-map_metadata", "0",
+                            "-c:a", "flac", str(dest)], check=True)
+        elif move:
+            shutil.move(src, dest)
+        else:
+            shutil.copy2(src, dest)
+        placed.append((str(src), str(dest)))
+    return placed
+
+
 def import_asis(library_dir: Path, mapping: dict[str, str]) -> list[tuple[str, str]]:
     """D13: move staged files to Unsorted/, keeping the dump's folder and file names."""
     moved = []
@@ -228,13 +279,27 @@ def run(conn: sqlite3.Connection, source: Path, staging_root: Path, which: str, 
         status, note, moved = "error", None, []
         try:
             mapping = stage(source, staging, files, dirs)
+            extras, skipped = [], []
             if a["mode"] == "asis":
                 moved = import_asis(library_dir, mapping)
             else:
                 moved, note = import_album(lib, staging, a["pin"])
-            status = "imported" if len(moved) == len(files) else "skipped" if not moved else "error"
+                if moved:
+                    done = {before for before, _ in moved}
+                    leftover = []
+                    for st, rel in mapping.items():
+                        if st in done:
+                            continue
+                        why = extra_skip_reason(conn, source, rel, files)
+                        (skipped.append((rel, why)) if why else leftover.append((Path(st), rel)))
+                    extras = place_extras(Path(moved[0][1]).parent, leftover, move=True)
+            placed = len(moved) + len(extras) + len(skipped)
+            status = "imported" if placed == len(files) else "skipped" if not placed else "error"
             if status == "error":
-                note = f"only {len(moved)} of {len(files)} files imported"
+                note = f"only {placed} of {len(files)} files imported"
+            elif extras or skipped:
+                note = (f"{len(extras)} file(s) not on the release kept in the album folder; "
+                        f"{len(skipped)} skipped")
             reason = (f"match {a['action']} {a['recommendation']} d={a['distance']} release {a['pin']}"
                       if a["mode"] == "apply" else "no MusicBrainz match: as-is into Unsorted (D13)")
             conn.executemany(
@@ -243,14 +308,19 @@ def run(conn: sqlite3.Connection, source: Path, staging_root: Path, which: str, 
                 [(now(), run_id, "import" if a["mode"] == "apply" else "import_asis",
                   mapping.get(before, before), after,
                   reason + (" (wav->flac)" if mapping.get(before, "").lower().endswith(".wav") else ""),
-                  a["decided_by"]) for before, after in moved])
+                  a["decided_by"]) for before, after in moved]
+                + [(now(), run_id, "import_extra", mapping[before], after,
+                    f"not on release {a['pin']}: kept in the album folder, tags untouched", a["decided_by"])
+                   for before, after in extras]
+                + _skip_rows(run_id, skipped, a["decided_by"]))
         except Exception as e:
             note = f"{type(e).__name__}: {e}"[:300]
         finally:
             shutil.rmtree(staging, ignore_errors=True)  # staging copies only, never dump files
         lib_dir = os.path.dirname(moved[0][1]) if moved else None
         conn.execute("INSERT OR REPLACE INTO imports VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                     (a["id"], run_id, a["mode"], status, a["pin"], lib_dir, len(moved), note, now()))
+                     (a["id"], run_id, a["mode"], status, a["pin"], lib_dir,
+                      len(moved) + len(extras), note, now()))
         conn.commit()
         counts[status] += 1
         print(f"  [{n}/{len(albums)}] {status}: {a['album_key']} -> {lib_dir or note}",
@@ -289,3 +359,44 @@ def prune_duplicates(conn: sqlite3.Connection, *, apply: bool = False) -> dict:
         removed += 1
     conn.commit()
     return {"removed": removed}
+
+
+def repair_extras(conn: sqlite3.Connection, source: Path, *, apply: bool = False) -> dict:
+    """Albums imported before place_extras existed lack their unmapped files: copy those from
+    the dump (read-only) into the album folder, tags untouched, and mark the album imported."""
+    todo = []
+    for r in conn.execute("""
+        SELECT i.match_id, i.library_dir, i.album_id, m.album_key, m.files, m.decided_by FROM imports i
+        JOIN matches m ON m.id = i.match_id
+        WHERE i.status = 'error' AND i.mode = 'apply' AND i.library_dir IS NOT NULL"""):
+        done = {x[0] for x in conn.execute(
+            "SELECT source_path FROM audit_log WHERE action LIKE 'import%' AND source_path IN "
+            "(SELECT value FROM json_each(?))", (r["files"],))}
+        missing = [f for f in json.loads(r["files"]) if f not in done]
+        if missing:
+            todo.append((dict(r), missing))
+    if not apply:
+        return {"dry_run": True, "albums": len(todo),
+                "files": [{"album": r["album_key"], "missing": m,
+                           "skip": {f: why for f in m
+                                    if (why := extra_skip_reason(conn, source, f, json.loads(r["files"])))}}
+                          for r, m in todo]}
+    fixed = 0
+    for r, missing in todo:
+        album_files = json.loads(r["files"])
+        skipped = [(f, why) for f in missing if (why := extra_skip_reason(conn, source, f, album_files))]
+        missing = [f for f in missing if f not in dict(skipped)]
+        conn.executemany("INSERT INTO audit_log (ts, run_id, action, source_path, dest_path, reason, decided_by) "
+                         "VALUES (?, ?, ?, ?, ?, ?, ?)", _skip_rows(None, skipped, r["decided_by"] or "auto"))
+        placed = place_extras(Path(r["library_dir"]), [(source / f, f) for f in missing], move=False)
+        conn.executemany(
+            "INSERT INTO audit_log (ts, action, source_path, dest_path, reason, decided_by) VALUES (?, ?, ?, ?, ?, ?)",
+            [(now(), "import_extra", rel, dest,
+              f"not on release {r['album_id']}: kept in the album folder, tags untouched (repair)",
+              r["decided_by"] or "auto") for (_, dest), rel in zip(placed, missing)])
+        conn.execute("UPDATE imports SET status = 'imported', files = files + ?, note = ? WHERE match_id = ?",
+                     (len(placed), f"{len(placed)} file(s) not on the release kept in the album folder; "
+                                   f"{len(skipped)} skipped", r["match_id"]))
+        conn.commit()
+        fixed += 1
+    return {"repaired_albums": fixed}

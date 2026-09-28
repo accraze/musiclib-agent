@@ -60,6 +60,9 @@ def cmd_import(cfg: config.Config, args) -> None:
     if args.prune_duplicates:
         _emit(importer.prune_duplicates(conn, apply=args.apply))
         return
+    if args.repair_extras:
+        _emit(importer.repair_extras(conn, cfg.source_dir, apply=args.apply))
+        return
     if not args.apply:
         _emit(importer.plan(conn, cfg.source_dir, args.which, args.limit, args.album))
         return
@@ -137,6 +140,8 @@ def main(argv: list[str] | None = None) -> None:
     imp.add_argument("--limit", type=int, help="import at most N albums")
     imp.add_argument("--album", action="append", help="only this album key (repeatable)")
     imp.add_argument("--apply", action="store_true", help="actually copy files into the library")
+    imp.add_argument("--repair-extras", action="store_true",
+                     help="copy unmapped files missing from already-imported albums (with --apply)")
     imp.add_argument("--prune-duplicates", action="store_true",
                      help="remove library copies of files later found to be duplicates (with --apply)")
     imp.set_defaults(func=cmd_import)

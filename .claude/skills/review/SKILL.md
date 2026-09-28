@@ -52,6 +52,14 @@ hasn't approved (rule 7), every decision needs a reason.
   Dub/instrumental versions that fingerprint as the originals (e.g. Burning Spear's
   *Living Dub*) are judgment calls: surface them.
 
+## Files that don't fit the release
+
+beets imports only files it maps to the release's tracks. `musiclib import` then puts the
+leftovers (bonus tracks, strays) in the album folder under their dump name, tags untouched,
+and skips music videos and whole-album single files (D20). Say so in the table when an
+album has `extra_items`, and name anything that looks like a video, a full-album file or
+a track from another album.
+
 ## Tone of the table
 
 Short and specific. "gap 0.42, artist naming only" beats "looks good". Put the risky rows

@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-09-27 (doc rev 49)
+Last synced: 2026-09-28 (doc rev 52)
 -->
 
 # Music Library Agent — Spec
@@ -198,6 +198,23 @@ Duplicates can free 8.7 GB, about 1.5% of the dump. 5.1 GB of that can be remove
 - **The 4 errors** are unreadable files, for example the Alvarius B *Blood Operatives* folder.
 - **Test import (2026-09-27):** 5 albums, 60 files, 1.3 GB: Baroness (2 discs), Cambodian Rocks (compilation), Traffic (FLAC), Nina Simone (1965 original of a 2012 reissue) and Merzbow. All 102 source files were unchanged afterwards (size, mtime, SHA-256). Layout, MusicBrainz tags, embedded art and the audit log were all correct.
 
+## Import results (M3)
+
+The library holds 3,314 albums (37,859 audio files, 382 GB) at /srv/data/media/music-library, imported 2026-09-28 with no failed albums. A re-inventory afterwards found all 58,516 readable dump files unchanged. The 34 that were retried are the originally unreadable ones, retried on every run by design.
+
+| Dump files | Count | Where they are |
+| --- | --- | --- |
+| imported | 37,859 | Library, logged in the audit log (source → destination → reason) |
+| review | 19,754 | Waiting in the review queue (M4) |
+| duplicate | 740 | Not imported; each names the copy that was kept (D18) |
+| error | 180 | Unreadable (4 albums) |
+| unmatched | 14 | Loose files at the dump root |
+| skipped | 3 | Two music videos and one whole-album single file (D20) |
+
+- **Review batch 1** (18 close calls) was approved and imported.
+- **Fixed on the way (D19, D20):** duplicate copies *inside* one folder were not being caught, and beets silently leaves out files it can't place on the release. Both are fixed, with tests. The 13 affected albums were repaired from the dump.
+- **Removing in-folder duplicates** turned 12 review albums into strong matches, which were imported automatically.
+
 ## Open questions
 
 These need an answer before Milestone 2 (import). Milestone 1 (inventory) needs only the dump path.
@@ -217,6 +234,8 @@ Every design decision is recorded here, newest first. To reverse one, mark it Su
 
 | # | Date | Decision | Rationale | Status |
 | --- | --- | --- | --- | --- |
+| D20 | 2026-09-28 | Files beets can't place on the chosen release (bonus tracks, strays) go into the album folder under their dump name with tags untouched. Video files and whole-album single files are skipped and listed as skipped in the not-imported report. | beets imports only mapped files, so 14 extra files were silently left out of 13 albums; bonus tracks belong with their album, but a music video or a 44-minute single-file copy of the album does not | Proposed |
+| D19 | 2026-09-28 | A second copy inside one folder is a duplicate when AcoustID, the full title (parentheticals included) and length (within 2 s) match and the filename track numbers agree; if the numbers differ, it goes to review | Folder-level comparison missed in-folder copies (e.g. 02 First Communion and 02 First Communion 1). Alternate mixes share AcoustIDs, and a release can repeat a track on purpose (Cheer-Accident, The Why Album). | Proposed |
 | D18 | 2026-09-26 | Quarantine is a manifest, not a folder: nothing is ever moved out of the dump. Losing duplicates are simply not imported and are listed, with reasons, in a not-imported report. You archive or delete the dump yourself once the library checks out. | Safety rule 1 (dump is read-only) makes a physical quarantine impossible; the dump itself is the backup. Clarifies safety rule 3. | Accepted |
 | D17 | 2026-09-26 | Use the original release year in folder names: the path uses $original_year, falling back to $year. For example 1965 - Pastel Blues, not 2012 - Pastel Blues for a 2012 reissue. | Matches often land on reissues; the original year sorts discographies correctly. Only the path changes; tags keep the matched release's own date, unlike beets' original_date option. | Accepted |
 | D16 | 2026-09-25 | Import in two steps: musiclib match runs beets matching (tag_album) as a read-only dry run and records a verdict and candidates per album; musiclib import then copies each approved album with its chosen release pinned | beets has no real dry run; this makes safety rule 4 concrete, gives the review agent ranked candidates and penalties, and makes imports deterministic | Accepted |
@@ -244,7 +263,7 @@ Milestone 1 is read-only and starts once the dump path is known. Each later mile
 | --- | --- | --- | --- |
 | M1 | Inventory | `musiclib inventory`: state DB with hashes, fingerprints and tags; a summary report of formats, MBID coverage and exact duplicates | Done |
 | M2 | Dedupe + verify | `musiclib dupes` and `musiclib verify`: duplicate groups at three tiers, keeper picks, tag mismatch list | Done |
-| M3 | Import | beets config, `musiclib import` (dry run, then apply), quarantine and manifest | In progress |
-| M4 | Review agent | CLAUDE.md, `/dedupe` and `/review` skills, batch approval flow | Not started |
+| M3 | Import | beets config, `musiclib import` (dry run, then apply), quarantine and manifest | Done |
+| M4 | Review agent | CLAUDE.md, `/dedupe` and `/review` skills, batch approval flow | In progress |
 | M5 | Ingestion | `inbox/` pipeline and `/ingest` skill, with dedupe against the existing library | Not started |
 | M6 | Audit + unattended | `/audit`; optional Agent SDK runner triggered by a watcher or cron | Not started |
