@@ -19,11 +19,18 @@ from datetime import datetime, timezone
 from .importer import migrate
 from .verify import SCHEMA as VERIFY_SCHEMA
 
+# An album is in a duplicate review group if any of its folders is a member of one
+# (e.g. the losing copy of a tier-3 edition pair). Such albums wait in `dupe` whatever their
+# match distance, so a second copy can't be approved by accident.
+IN_DUPE = """(COALESCE(m.note, '') LIKE '%duplicate review%' OR EXISTS (
+    SELECT 1 FROM json_each(m.dirs) d
+    JOIN dupe_members dm ON dm.path = d.value
+    JOIN dupe_groups dg ON dg.id = dm.group_id AND dg.action = 'review'))"""
 KIND_SQL = {
-    "close": "m.action = 'review' AND m.note IS NULL AND m.distance < 0.1",
-    "weak": "m.action = 'review' AND m.note IS NULL AND m.distance >= 0.1 AND m.distance < 0.5",
-    "none": "m.action = 'review' AND m.note IS NULL AND (m.distance >= 0.5 OR m.distance IS NULL)",
-    "dupe": "m.action = 'review' AND m.note LIKE '%duplicate review%'",
+    "close": f"m.action = 'review' AND NOT {IN_DUPE} AND m.distance < 0.1",
+    "weak": f"m.action = 'review' AND NOT {IN_DUPE} AND m.distance >= 0.1 AND m.distance < 0.5",
+    "none": f"m.action = 'review' AND NOT {IN_DUPE} AND (m.distance >= 0.5 OR m.distance IS NULL)",
+    "dupe": f"m.action = 'review' AND {IN_DUPE}",
     "error": "m.action = 'error'",
 }
 # Penalties that don't question *which* release it is: naming, dates, pressing details.
@@ -82,9 +89,17 @@ def _local(conn: sqlite3.Connection, files: list[str]) -> dict:
     }
 
 
-def listing(conn: sqlite3.Connection, kind: str, limit: int = 20, offset: int = 0) -> dict:
+def _ensure(conn: sqlite3.Connection) -> None:
+    from .dupes import SCHEMA as DUPES_SCHEMA
     migrate(conn)
     conn.executescript(VERIFY_SCHEMA)
+    have = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    if "dupe_groups" not in have:
+        conn.executescript(DUPES_SCHEMA)
+
+
+def listing(conn: sqlite3.Connection, kind: str, limit: int = 20, offset: int = 0) -> dict:
+    _ensure(conn)
     rows = conn.execute(f"""
         SELECT m.* FROM matches m WHERE ({KIND_SQL[kind]}) AND m.decision IS NULL
         ORDER BY m.distance, m.album_key LIMIT ? OFFSET ?""", (limit, offset)).fetchall()
@@ -101,7 +116,7 @@ def listing(conn: sqlite3.Connection, kind: str, limit: int = 20, offset: int = 
 
 
 def stats(conn: sqlite3.Connection) -> dict:
-    migrate(conn)
+    _ensure(conn)
     out = {}
     for kind, where in KIND_SQL.items():
         r = conn.execute(f"""SELECT COUNT(*) AS total, SUM(m.decision IS NULL) AS open,

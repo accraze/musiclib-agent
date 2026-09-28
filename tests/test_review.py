@@ -65,3 +65,16 @@ def test_decide_is_all_or_nothing(conn):
 def test_decide_requires_reason(conn):
     with pytest.raises(SystemExit):
         review.decide(conn, [{"album_key": "Close/", "decision": "approve"}], "user")
+
+
+def test_album_in_a_dupe_review_group_is_never_a_close_call(conn):
+    from musiclib import dupes
+    conn.executescript(dupes.SCHEMA)
+    conn.execute("UPDATE matches SET dirs = '[\"Close/\"]' WHERE album_key = 'Close/'")
+    gid = conn.execute("INSERT INTO dupe_groups (tier, scope, action, reason, keeper, reclaimable) "
+                       "VALUES (3, 'folder', 'review', 'editions', 'Other/', 1)").lastrowid
+    conn.executemany("INSERT INTO dupe_members (group_id, path, role) VALUES (?, ?, ?)",
+                     [(gid, "Other/", "keep"), (gid, "Close/", "drop")])
+    conn.commit()
+    assert review.listing(conn, "close")["albums"] == []
+    assert [a["album_key"] for a in review.listing(conn, "dupe")["albums"]] == ["Close/"]
