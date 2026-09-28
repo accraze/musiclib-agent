@@ -201,6 +201,9 @@ def extra_skip_reason(conn: sqlite3.Connection, source: Path, rel: str, album_fi
                                capture_output=True, text=True)
         if any(c not in ("mjpeg", "png") for c in probe.stdout.split()):
             return "video file, not audio"
+    err = conn.execute("SELECT error FROM files WHERE path = ?", (rel,)).fetchone()
+    if err and err[0]:
+        return "damaged file (failed to scan or fingerprint)"
     marks = ",".join("?" * len(album_files))
     durs = dict(conn.execute(f"SELECT path, COALESCE(duration, 0) FROM files WHERE path IN ({marks})",
                              album_files).fetchall())
@@ -400,3 +403,28 @@ def repair_extras(conn: sqlite3.Connection, source: Path, *, apply: bool = False
         conn.commit()
         fixed += 1
     return {"repaired_albums": fixed}
+
+
+def remove_from_library(conn: sqlite3.Connection, dest: str, reason: str, decided_by: str) -> dict:
+    """Remove one library file (beets DB and disk), logged. Never touches the dump."""
+    import beets
+
+    library_dir = Path(beets.config["directory"].as_filename()).resolve()
+    path = Path(dest).resolve()
+    if not path.is_relative_to(library_dir):
+        raise SystemExit(f"{dest} is not inside the library ({library_dir})")
+    if not path.exists():
+        raise SystemExit(f"{dest} does not exist")
+    src = conn.execute("SELECT source_path FROM audit_log WHERE dest_path = ? AND action LIKE 'import%' "
+                       "ORDER BY id DESC LIMIT 1", (str(path),)).fetchone()
+    lib = open_library()
+    item = next((i for i in lib.items() if os.fsdecode(i.path) == str(path)), None)
+    if item is not None:
+        item.remove(delete=True)
+    else:
+        path.unlink()
+    conn.execute("INSERT INTO audit_log (ts, action, source_path, dest_path, reason, decided_by) "
+                 "VALUES (?, 'remove_from_library', ?, ?, ?, ?)",
+                 (now(), src[0] if src else None, str(path), reason, decided_by))
+    conn.commit()
+    return {"removed": str(path), "source": src[0] if src else None, "in_beets_db": item is not None}

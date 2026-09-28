@@ -197,3 +197,19 @@ def test_file_not_on_release_is_kept_in_album_folder_untouched(env, monkeypatch)
     assert names == ["01 Real Title 1.mp3", "02 Real Title 2.mp3", "03 Song 3.flac"]
     extra = conn.execute("SELECT source_path, reason FROM audit_log WHERE action = 'import_extra'").fetchone()
     assert extra["source_path"] == "Some Band - Demo/03 Song 3.wav" and "not on release rel-1" in extra["reason"]
+
+
+def test_damaged_extra_is_skipped(env):
+    cfg, conn, importer = env
+    conn.execute("INSERT INTO files (path, top_dir, ext, size, mtime, duration, error, scanned_at) VALUES "
+                 "('A/08 Song1.mp3', 'A', 'mp3', 1, 0, 410, 'fingerprint: Empty fingerprint', 'now'), "
+                 "('A/08 Song2.mp3', 'A', 'mp3', 1, 0, 460, NULL, 'now')")
+    why = importer.extra_skip_reason(conn, cfg.source_dir, "A/08 Song1.mp3", ["A/08 Song1.mp3", "A/08 Song2.mp3"])
+    assert why.startswith("damaged")
+
+
+def test_remove_from_library_refuses_paths_outside_it(env):
+    cfg, conn, importer = env
+    with pytest.raises(SystemExit):
+        importer.remove_from_library(conn, str(cfg.source_dir / "Some Band - Demo/01 Song 1.mp3"), "x", "user")
+    assert (cfg.source_dir / "Some Band - Demo/01 Song 1.mp3").exists()
