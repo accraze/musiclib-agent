@@ -147,3 +147,14 @@ def test_alternate_mix_sharing_an_acoustid_is_kept(tmp_path):
     add(conn, "Box/12 Dust (Alternate Mix).mp3", "dust")
     _title(conn, "Box/12 Dust (Alternate Mix).mp3", "Dust (Alternate Mix)")
     assert run(conn) == []
+
+
+def test_same_title_at_different_track_numbers_goes_to_review(tmp_path):
+    """Cheer-Accident's The Why Album really has 'Transposition (Same mix)' as tracks 9 and 10."""
+    conn = setup(tmp_path)
+    add(conn, "Why/09 Transposition ( Same Mix ).mp3", "tr")
+    _title(conn, "Why/09 Transposition ( Same Mix ).mp3", "Transposition (Same mix)")
+    add(conn, "Why/10 Transposition ( Same Mix ).mp3", "tr")
+    _title(conn, "Why/10 Transposition ( Same Mix ).mp3", "Transposition (Same mix)")
+    [g] = run(conn)
+    assert (g["scope"], g["action"]) == ("file", "review")

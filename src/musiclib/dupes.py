@@ -9,13 +9,16 @@ Folders are compared by the identities they contain:
                                                                         fully covered, else review
   tier 3  same overlap, but tagged as different releases (editions)  -> review
   tier 2  (file scope) two copies inside one folder: same AcoustID, same full title
-          (case-insensitive, parentheticals included), lengths within 2 s  -> auto
+          (case-insensitive, parentheticals included), lengths within 2 s  -> auto, unless
+          the filenames carry different track numbers (a release may repeat a track on
+          purpose, or a bonus version may share tags)                    -> review
 
 Folders that share only a few tracks (album vs. compilation) are not duplicates.
 Keepers follow SPEC "Keeper ranking" (D6/D10).
 """
 
 import json
+import re
 import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -61,6 +64,12 @@ def quality_tier(lossless: bool, bitrate: float) -> int:
 def _tiebreak(path: str) -> tuple:
     """Prefer shorter, then alphabetically first paths: 'x.flac' over 'x (2023_05_20 ...).flac'."""
     return (-len(path), [-ord(c) for c in path])
+
+
+def _filename_number(path: str) -> int | None:
+    """First number in the file name: '09 Transposition.mp3' -> 9."""
+    m = re.search(r"\d+", path.rsplit("/", 1)[-1])
+    return int(m.group()) if m else None
 
 
 def _majority(values) -> str | None:
@@ -242,7 +251,12 @@ def find(conn: sqlite3.Connection) -> dict:
         if not losers:
             continue
         mem = [(keeper["path"], "keep", 1.0, None)] + [(r["path"], "drop", 1.0, None) for r in losers]
-        groups.append((2, "file", "auto", "second copy in the same folder", keeper["path"], None,
+        numbers = {_filename_number(r["path"]) for r in [keeper, *losers]} - {None}
+        if len(numbers) > 1:
+            action, reason = "review", "same audio and title but different track numbers: may be intentional"
+        else:
+            action, reason = "auto", "second copy in the same folder"
+        groups.append((2, "file", action, reason, keeper["path"], None,
                        sum(r["size"] for r in losers), mem))
 
     for tier, scope, action, reason, keeper, carry, reclaim, mem in groups:
