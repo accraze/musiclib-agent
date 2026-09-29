@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-09-28 (doc rev 55)
+Last synced: 2026-09-28 (doc rev 56)
 -->
 
 # Music Library Agent — Spec
@@ -237,6 +237,7 @@ Every design decision is recorded here, newest first. To reverse one, mark it Su
 
 | # | Date | Decision | Rationale | Status |
 | --- | --- | --- | --- | --- |
+| D21 | 2026-09-28 | Standing approval for clear close calls: the agent approves, without asking, any close call where the gap to the runner-up is at least 0.15, at least 90% of files are fingerprint-confirmed with at most 1 mismatch, at most 1 release track is missing and at most 2 files are extra, penalties are cosmetic, no plausible runner-up (under 0.35) fits the files exactly, and there are no video or scan-error files. Each approval is logged with the criteria; everything else is asked. | In five batches every album meeting these criteria was approved; asking about them cost attention the ambiguous ones need. Criteria live in code (musiclib review auto), not in judgment. | Accepted |
 | D20 | 2026-09-28 | Files beets can't place on the chosen release (bonus tracks, strays) go into the album folder under their dump name with tags untouched. Video files, whole-album single files and damaged files (less than half the stated length decodes) are skipped and listed as skipped in the not-imported report. | beets imports only mapped files, so 14 extra files were silently left out of 13 albums; bonus tracks belong with their album, but a music video or a 44-minute single-file copy of the album does not | Accepted |
 | D19 | 2026-09-28 | A second copy inside one folder is a duplicate when AcoustID, the full title (parentheticals included) and length (within 2 s) match and the filename track numbers agree; if the numbers differ, it goes to review | Folder-level comparison missed in-folder copies (e.g. 02 First Communion and 02 First Communion 1). Alternate mixes share AcoustIDs, and a release can repeat a track on purpose (Cheer-Accident, The Why Album). | Proposed |
 | D18 | 2026-09-26 | Quarantine is a manifest, not a folder: nothing is ever moved out of the dump. Losing duplicates are simply not imported and are listed, with reasons, in a not-imported report. You archive or delete the dump yourself once the library checks out. | Safety rule 1 (dump is read-only) makes a physical quarantine impossible; the dump itself is the backup. Clarifies safety rule 3. | Accepted |
