@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-09-28 (doc rev 62)
+Last synced: 2026-09-28 (doc rev 61)
 -->
 
 # Music Library Agent — Spec
