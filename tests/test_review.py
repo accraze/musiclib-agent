@@ -113,8 +113,9 @@ def test_d22_exact_fit_without_acoustid_data(album, ok):
 
 
 def test_album_whose_release_is_already_imported_is_never_auto_approved(conn):
+    # Neither album has AcoustID data, so a shared-audio check can't rule a duplicate out.
     conn.execute("INSERT INTO matches (album_key, dirs, files, action, recommendation, distance, album_id, "
-                 "candidates, matched_at) VALUES ('Copy/', '[]', '[]', 'review', 'medium', 0.02, 'rel-Auto/', ?, 'now')",
+                 "candidates, matched_at) VALUES ('Copy/', '[]', '[\"c.mp3\"]', 'review', 'medium', 0.02, 'rel-Auto/', ?, 'now')",
                  (json.dumps([cand("rel-Auto/", 0.02), cand("r9", 0.6)]),))
     auto_id = conn.execute("SELECT id FROM matches WHERE album_key = 'Auto/'").fetchone()[0]
     conn.execute("INSERT INTO imports VALUES (?, NULL, 'apply', 'imported', 'rel-Auto/', '/lib/x', 1, NULL, 'now')",
@@ -154,3 +155,23 @@ def _none_album(local_album, cands, already=()):
 ])
 def test_d24_check(album, meta, ok):
     assert review.d24_check(album, meta)[0] is ok
+
+
+def test_imported_best_candidate_without_shared_audio_is_not_a_duplicate(conn):
+    from musiclib import acoustid
+    acoustid.migrate(conn)
+    for path, aid in (("vol5/1.mp3", "a5"), ("vol8/1.mp3", "a8")):
+        conn.execute("INSERT INTO files (path, top_dir, ext, size, mtime, fingerprint, fp_duration, scanned_at) "
+                     "VALUES (?, 'x', 'mp3', 1, 0, ?, 100, 'now')", (path, f"fp-{path}"))
+        conn.execute("INSERT INTO acoustid_lookups (fingerprint, fp_duration, status, acoustid_id, looked_up_at) "
+                     "VALUES (?, 100, 'ok', ?, 'now')", (f"fp-{path}", aid))
+    conn.execute("UPDATE matches SET files = '[\"vol8/1.mp3\"]' WHERE album_key = 'Auto/'")
+    conn.execute("INSERT INTO matches (album_key, dirs, files, action, recommendation, distance, album_id, "
+                 "candidates, matched_at) VALUES ('Vol5/', '[]', '[\"vol5/1.mp3\"]', 'review', 'none', 0.53, "
+                 "'rel-Auto/', ?, 'now')", (json.dumps([cand("rel-Auto/", 0.53)]),))
+    auto_id = conn.execute("SELECT id FROM matches WHERE album_key = 'Auto/'").fetchone()[0]
+    conn.execute("INSERT INTO imports VALUES (?, NULL, 'apply', 'imported', 'rel-Auto/', '/lib/x', 1, NULL, 'now')",
+                 (auto_id,))
+    conn.commit()
+    [a] = [a for a in review.listing(conn, "none")["albums"] if a["album_key"] == "Vol5/"]
+    assert a["already_in_library"] == []

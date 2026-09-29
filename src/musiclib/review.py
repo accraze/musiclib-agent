@@ -101,7 +101,9 @@ def _local(conn: sqlite3.Connection, files: list[str]) -> dict:
 
 
 def _ensure(conn: sqlite3.Connection) -> None:
+    from .acoustid import migrate as acoustid_migrate
     from .dupes import SCHEMA as DUPES_SCHEMA
+    acoustid_migrate(conn)
     migrate(conn)
     conn.executescript(VERIFY_SCHEMA)
     have = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
@@ -121,17 +123,37 @@ def listing(conn: sqlite3.Connection, kind: str, limit: int = 20, offset: int = 
     for m in rows:
         cands = json.loads(m["candidates"] or "[]")
         action, why = suggest(kind, cands)
-        # Only the best match (or one practically tied with it) counts: poor candidates that
-        # happen to be imported releases (Hy Brazil Vol 1 as a candidate for Vol 3) are no signal.
+        # A duplicate needs evidence: the best match (or one tied with it) is an imported release
+        # AND this album shares audio with that import. A poor best candidate that happens to be
+        # imported (Hy Brazil Vol 8 as the closest thing to Vol 5) is no signal on its own.
         best = cands[0]["distance"] if cands else None
+        files = json.loads(m["files"])
         already = sorted({in_library[c["album_id"]] for c in cands
-                          if c.get("album_id") in in_library and c["distance"] <= best + 0.05})
+                          if c.get("album_id") in in_library and c["distance"] <= best + 0.05
+                          and _shares_audio(conn, files, in_library[c["album_id"]])})
         if already:
             action, why = "skip", f"a candidate release is already in the library (from {already[0]})"
         albums.append({"album_key": m["album_key"], "files": len(json.loads(m["files"])),
                        "local": _local(conn, json.loads(m["files"])), "candidates": cands,
                        "note": m["note"], "suggest": action, "why": why, "already_in_library": already})
     return {"kind": kind, "remaining": total, "offset": offset, "albums": albums}
+
+
+def _audio(conn: sqlite3.Connection, files: list[str]) -> set[str]:
+    marks = ",".join("?" * len(files))
+    return {r[0] for r in conn.execute(f"""SELECT a.acoustid_id FROM files f JOIN acoustid_lookups a
+        ON a.fingerprint = f.fingerprint AND a.fp_duration = f.fp_duration
+        WHERE f.path IN ({marks}) AND a.acoustid_id IS NOT NULL""", files)}
+
+
+def _shares_audio(conn: sqlite3.Connection, files: list[str], other_key: str, min_share: float = 0.5) -> bool:
+    """True when at least half of this album's identified audio is in the other album. Albums
+    without any AcoustID data can't be ruled out, so they count as sharing."""
+    other = conn.execute("SELECT files FROM matches WHERE album_key = ?", (other_key,)).fetchone()
+    mine = _audio(conn, files)
+    if not mine or other is None:
+        return True
+    return len(mine & _audio(conn, json.loads(other[0]))) >= min_share * len(mine)
 
 
 def _imported_releases(conn: sqlite3.Connection) -> dict[str, str]:
