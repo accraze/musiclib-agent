@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-09-29 (doc rev 64)
+Last synced: 2026-09-29 (doc rev 65)
 -->
 
 # Music Library Agent — Spec
@@ -221,6 +221,7 @@ The library holds 3,314 albums (37,859 audio files, 382 GB) at /srv/data/media/m
 - **Swapped tracks fixed (2026-09-28):** 31 files in 10 imported albums had titles on the wrong audio (e.g. DJ Cam "Honey" and "James" swapped). They were relabeled by fingerprint, with track length as independent confirmation. Potshot *Till I Die* is left for a hand fix: 7 tracks are swapped, and 3 files are songs from another release.
 - **D23 on import (batch 10):** fixed Dr. Dre *The Chronic* (11 files), Jedi Mind Tricks *Visions of Gandhi* (4) and DJ Koze *Knock Knock* (2). Six flagged albums are left as they are: AcoustID is wrong where lengths disagree (*Serious Times*, Singers & Players), tracks come from other releases (*Till I Die*, *Truth and Wizdom*), or there are alternate takes with the same title (Savoy/Dial, Grandmothers).
 - **Split releases merged (2026-09-29):** 22 releases spread over several folders (disc 1/disc 2, reels, parts) were merged into one album each and re-matched. 13 became strong matches and were imported (e.g. Basinski *The Disintegration Loops*, Lee Perry *Arkology*); 9 are back in the review queue. Two more duplicate copies were caught by the new already-in-library check (Pink Fairies, A.R. & Machines). Library: 3,671 albums, 41,745 files, 419 GB. Open: 126 close, 479 weak, 364 unmatched, 89 in duplicate review, 4 errors.
+- **Box sets (2026-09-29):** the Merzbox (41 disc folders, 185 tracks) and *Works of Igor Stravinsky* (13 volume folders, 353 tracks) were merged and imported as single box-set albums; discs already imported as standalone releases stay separate. D24 sent 135 unmatched albums to Unsorted/.
 
 ## Open questions
 
@@ -241,6 +242,7 @@ Every design decision is recorded here, newest first. To reverse one, mark it Su
 
 | # | Date | Decision | Rationale | Status |
 | --- | --- | --- | --- | --- |
+| D25 | 2026-09-29 | Prefer English artist names: beets import.languages [en] uses MusicBrainz's English alias where one exists (tags and folders). Already-imported albums with non-Latin artist names were re-synced (musiclib resync); artists without an English alias keep their native name. | Folders like Игорь Фёдорович Стравинский/ and 久石譲/ were hard to browse. 45 of 86 affected albums switched (Igor Stravinsky, Joe Hisaishi, Ichiko Aoba, Fushitsusha); 24 have no English alias on MusicBrainz (e.g. Carmen Maki & OZ). | Accepted |
 | D24 | 2026-09-29 | Unmatched albums (best candidate at distance 0.5 or worse) go to Unsorted/ as-is without asking when no candidate's album title matches the folder's album tag (exact or near-exact, or whole-word containment of 8+ characters), the album isn't flagged as a possible duplicate, and it has no video files. | In three batches, every partial-album approval had a title-matching candidate and no Unsorted decision did. Covers 43% of unmatched albums (135 on 2026-09-29); box-set discs, duplicates and title matches are still asked. | Accepted |
 | D23 | 2026-09-28 | After every import, albums whose files fingerprint as other tracks of the same album are relabeled by fingerprint automatically, but only when the pairing is one-to-one and every move is supported by track length (equal-length tracks count as no evidence). Otherwise the album is flagged for musiclib retag --album. All changes are logged. | beets pairs files with release tracks by title tag, so scrambled albums import with titles on the wrong songs (Dr. Dre The Chronic: 10 of 11). 10 imported albums (31 files) were fixed this way; where lengths contradicted AcoustID (Serious Times, Singers & Players) the tags were right and nothing changed. | Accepted |
 | D22 | 2026-09-28 | Extends D21 to exact fits that AcoustID has no data on: approved without asking when every file maps and nothing is missing, the gap to the runner-up is at least 0.3, there are zero fingerprint mismatches, penalties are cosmetic, and there are no video or scan-error files. | In batches 8 and 9, 9 of 20 albums were exactly this case (obscure releases such as Sun Ra, Sky Saxon, Zs) and all were approved; a missing fingerprint is absence of evidence, not a conflict. | Accepted |
