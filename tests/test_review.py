@@ -123,3 +123,15 @@ def test_album_whose_release_is_already_imported_is_never_auto_approved(conn):
     [a] = [a for a in review.listing(conn, "close")["albums"] if a["album_key"] == "Copy/"]
     assert a["already_in_library"] == ["Auto/"] and a["suggest"] == "skip"
     assert review.d21_check(a, [])[0] is False
+
+
+def test_poor_candidate_already_imported_is_not_flagged(conn):
+    conn.execute("INSERT INTO matches (album_key, dirs, files, action, recommendation, distance, album_id, "
+                 "candidates, matched_at) VALUES ('Vol3/', '[]', '[]', 'review', 'none', 0.53, 'rel-x', ?, 'now')",
+                 (json.dumps([cand("rel-x", 0.53), cand("rel-Auto/", 0.64)]),))
+    auto_id = conn.execute("SELECT id FROM matches WHERE album_key = 'Auto/'").fetchone()[0]
+    conn.execute("INSERT INTO imports VALUES (?, NULL, 'apply', 'imported', 'rel-Auto/', '/lib/x', 1, NULL, 'now')",
+                 (auto_id,))
+    conn.commit()
+    [a] = [a for a in review.listing(conn, "none")["albums"] if a["album_key"] == "Vol3/"]
+    assert a["already_in_library"] == []

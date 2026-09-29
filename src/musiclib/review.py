@@ -119,7 +119,11 @@ def listing(conn: sqlite3.Connection, kind: str, limit: int = 20, offset: int = 
     for m in rows:
         cands = json.loads(m["candidates"] or "[]")
         action, why = suggest(kind, cands)
-        already = sorted({in_library[c["album_id"]] for c in cands if c.get("album_id") in in_library})
+        # Only the best match (or one practically tied with it) counts: poor candidates that
+        # happen to be imported releases (Hy Brazil Vol 1 as a candidate for Vol 3) are no signal.
+        best = cands[0]["distance"] if cands else None
+        already = sorted({in_library[c["album_id"]] for c in cands
+                          if c.get("album_id") in in_library and c["distance"] <= best + 0.05})
         if already:
             action, why = "skip", f"a candidate release is already in the library (from {already[0]})"
         albums.append({"album_key": m["album_key"], "files": len(json.loads(m["files"])),
