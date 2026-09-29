@@ -90,6 +90,25 @@ def cmd_review(cfg: config.Config, args) -> None:
         _emit(review.decide(conn, data, args.by))
 
 
+def cmd_retag(cfg: config.Config, args) -> None:
+    from . import beetsenv
+    beetsenv.setup(cfg)
+    from . import importer, retag
+
+    conn = db.connect(cfg.db_path)
+    if args.scan:
+        _emit(retag.swap_suspects(conn))
+        return
+    if not args.album:
+        raise SystemExit("--album or --scan required")
+    lib = importer.open_library()
+    if args.apply:
+        _emit(retag.apply(conn, lib, args.album, args.by, args.reason or "tags were on the wrong audio"))
+    else:
+        p = retag.plan(conn, lib, args.album)
+        _emit({k: v for k, v in p.items() if not k.startswith("_")})
+
+
 def cmd_report(cfg: config.Config, args) -> None:
     conn = db.connect(cfg.db_path)
     if args.not_imported:
@@ -171,6 +190,14 @@ def main(argv: list[str] | None = None) -> None:
     rd.add_argument("--by", choices=["agent", "user"], required=True,
                     help="agent: agent proposed, user approved the batch; user: user decided directly")
     rev.set_defaults(func=cmd_review)
+
+    rt = sub.add_parser("retag", help="relabel an imported album by fingerprint (dry run without --apply)")
+    rt.add_argument("--scan", action="store_true", help="list imported albums with swapped-track evidence")
+    rt.add_argument("--album", help="album key")
+    rt.add_argument("--apply", action="store_true")
+    rt.add_argument("--by", choices=["agent", "user"], default="user")
+    rt.add_argument("--reason")
+    rt.set_defaults(func=cmd_retag)
 
     rep = sub.add_parser("report", help="summarize the inventory as JSON")
     rep.add_argument("--top", type=int, default=10, help="examples per section")
