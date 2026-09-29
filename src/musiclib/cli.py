@@ -84,7 +84,7 @@ def cmd_review(cfg: config.Config, args) -> None:
     elif args.review_cmd == "list":
         _emit(review.listing(conn, args.kind, args.limit, args.offset))
     elif args.review_cmd == "auto":
-        _emit(review.auto_approve(conn, limit=args.limit, apply=args.apply))
+        _emit(review.auto_approve(conn, kind=args.kind, limit=args.limit, apply=args.apply))
     else:
         data = json.load(sys.stdin if args.file == "-" else open(args.file))
         _emit(review.decide(conn, data, args.by))
@@ -196,7 +196,8 @@ def main(argv: list[str] | None = None) -> None:
     rl.add_argument("--kind", choices=["close", "weak", "none", "dupe", "error"], default="close")
     rl.add_argument("--limit", type=int, default=20)
     rl.add_argument("--offset", type=int, default=0)
-    ra = rsub.add_parser("auto", help="D21: approve qualifying close calls; the rest are returned to ask")
+    ra = rsub.add_parser("auto", help="standing approvals: D21/D22 (close) or D24 (none); the rest to ask")
+    ra.add_argument("--kind", choices=["close", "none"], default="close")
     ra.add_argument("--limit", type=int, default=20)
     ra.add_argument("--apply", action="store_true", help="record the D21 approvals (otherwise dry run)")
     rd = rsub.add_parser("decide", help="record a user-approved batch of decisions (JSON list)")

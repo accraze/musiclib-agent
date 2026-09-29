@@ -14,6 +14,8 @@ Decisions: approve (import with a release pinned), asis (Unsorted/, D13), skip (
 import json
 import sqlite3
 from collections import Counter
+
+from .verify import titles_agree
 from datetime import datetime, timezone
 
 from .importer import migrate
@@ -241,19 +243,49 @@ def _d21(album: dict, files_meta: list[tuple]) -> tuple[bool, str]:
                   f"{best['extra_tracks']} missing, {best['extra_items']} extra")
 
 
-def auto_approve(conn: sqlite3.Connection, *, limit: int = 20, apply: bool = False) -> dict:
-    """Split the next `limit` close calls into D21 approvals and albums to ask about."""
-    batch = listing(conn, "close", limit)
+def d24_check(album: dict, files_meta: list[tuple]) -> tuple[bool, str]:
+    """D24: an unmatched album goes to Unsorted/ without asking when no candidate is at all
+    plausible. A candidate whose album title matches the folder's album tag means a possible
+    partial album, so those are asked about."""
+    from .verify import norm_title
+
+    cands = album["candidates"]
+    local = norm_title(album["local"].get("album"))
+    if cands and cands[0]["distance"] < 0.5:
+        return False, "a candidate is closer than 0.5"
+    if album.get("already_in_library"):
+        return False, "possible duplicate of an imported album"
+    if any(ext in VIDEO_EXTS for ext, _ in files_meta):
+        return False, "contains video files"
+    def contains(big: str, small: str) -> bool:  # whole words, and long enough to mean something
+        return len(small) >= 8 and f" {small} " in f" {big} "
+
+    for c in cands:
+        cand = norm_title(c["album"])
+        if local and cand and (titles_agree(local, cand) or contains(local, cand) or contains(cand, local)):
+            return False, f"candidate '{c['album']}' matches the album title: possible partial album"
+    best = f"{cands[0]['distance']:.2f} {cands[0]['artist']} - {cands[0]['album']}" if cands else "none"
+    return True, f"D24: no plausible candidate (best {best}); Unsorted as-is (D13)"
+
+
+def auto_approve(conn: sqlite3.Connection, *, kind: str = "close", limit: int = 20,
+                 apply: bool = False) -> dict:
+    """Split the next `limit` albums of `kind` into standing-approval decisions (D21/D22 for
+    close calls, D24 for unmatched) and albums to ask about."""
+    if kind not in ("close", "none"):
+        raise SystemExit("auto works on --kind close or none")
+    batch = listing(conn, kind, limit)
     auto, ask = [], []
     for a in batch["albums"]:
         files = json.loads(conn.execute("SELECT files FROM matches WHERE album_key = ?",
                                         (a["album_key"],)).fetchone()[0])
         marks = ",".join("?" * len(files))
-        meta = conn.execute(f"SELECT ext, error FROM files WHERE path IN ({marks})", files).fetchall()
-        ok, why = d21_check(a, [tuple(m) for m in meta])
+        meta = [tuple(m) for m in conn.execute(f"SELECT ext, error FROM files WHERE path IN ({marks})", files)]
+        ok, why = (d21_check if kind == "close" else d24_check)(a, meta)
         (auto if ok else ask).append({**a, "d21": why})
     recorded = None
     if apply and auto:
-        recorded = decide(conn, [{"album_key": a["album_key"], "decision": "approve", "reason": a["d21"]}
+        decision = "approve" if kind == "close" else "asis"
+        recorded = decide(conn, [{"album_key": a["album_key"], "decision": decision, "reason": a["d21"]}
                                  for a in auto], "agent")
     return {"auto": auto, "ask": ask, "recorded": recorded, "remaining": batch["remaining"]}

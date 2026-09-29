@@ -135,3 +135,22 @@ def test_poor_candidate_already_imported_is_not_flagged(conn):
     conn.commit()
     [a] = [a for a in review.listing(conn, "none")["albums"] if a["album_key"] == "Vol3/"]
     assert a["already_in_library"] == []
+
+
+def _none_album(local_album, cands, already=()):
+    return {"candidates": cands, "files": 5, "already_in_library": list(already),
+            "local": {"album": local_album, "verify": {}}}
+
+
+@pytest.mark.parametrize("album,meta,ok", [
+    (_none_album("Heat", [dict(cand("r", 0.58), album="Tekvision")]), [("mp3", None)], True),
+    (_none_album("The Acid Test Reels 1966", [dict(cand("r", 0.52), album="The Acid Test Reels 1966")]), [], False),
+    (_none_album("Bartók at the Piano", [dict(cand("r", 0.50), album="Bartók plays Bartók: Bartók at the Piano")]), [], False),
+    (_none_album("Vol 2", [dict(cand("r", 0.51), album="Other")], already=["X/"]), [], False),
+    (_none_album("Clips", [dict(cand("r", 0.6), album="Other")]), [("mp4", None)], False),
+    (_none_album("Near", [dict(cand("r", 0.45), album="Other")]), [], False),
+    (_none_album("Cup of Tea Sessions", [dict(cand("r", 0.6), album="Up")]), [], True),        # short title
+    (_none_album("Merzbox", [dict(cand("r", 0.6), album="Merzbox")]), [], False),              # exact title
+])
+def test_d24_check(album, meta, ok):
+    assert review.d24_check(album, meta)[0] is ok
