@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-09-28 (doc rev 59)
+Last synced: 2026-09-28 (doc rev 60)
 -->
 
 # Music Library Agent — Spec
@@ -238,6 +238,7 @@ Every design decision is recorded here, newest first. To reverse one, mark it Su
 
 | # | Date | Decision | Rationale | Status |
 | --- | --- | --- | --- | --- |
+| D22 | 2026-09-28 | Extends D21 to exact fits that AcoustID has no data on: approved without asking when every file maps and nothing is missing, the gap to the runner-up is at least 0.3, there are zero fingerprint mismatches, penalties are cosmetic, and there are no video or scan-error files. | In batches 8 and 9, 9 of 20 albums were exactly this case (obscure releases such as Sun Ra, Sky Saxon, Zs) and all were approved; a missing fingerprint is absence of evidence, not a conflict. | Accepted |
 | D21 | 2026-09-28 | Standing approval for clear close calls: the agent approves, without asking, any close call where the gap to the runner-up is at least 0.15, at least 90% of files are fingerprint-confirmed with at most 1 mismatch, at most 1 release track is missing and at most 2 files are extra, penalties are cosmetic, no plausible runner-up (under 0.35) fits the files exactly, and there are no video or scan-error files. Each approval is logged with the criteria; everything else is asked. | In five batches every album meeting these criteria was approved; asking about them cost attention the ambiguous ones need. Criteria live in code (musiclib review auto), not in judgment. | Accepted |
 | D20 | 2026-09-28 | Files beets can't place on the chosen release (bonus tracks, strays) go into the album folder under their dump name with tags untouched. Video files, whole-album single files and damaged files (less than half the stated length decodes) are skipped and listed as skipped in the not-imported report. | beets imports only mapped files, so 14 extra files were silently left out of 13 albums; bonus tracks belong with their album, but a music video or a 44-minute single-file copy of the album does not | Accepted |
 | D19 | 2026-09-28 | A second copy inside one folder is a duplicate when AcoustID, the full title (parentheticals included) and length (within 2 s) match and the filename track numbers agree; if the numbers differ, it goes to review | Folder-level comparison missed in-folder copies (e.g. 02 First Communion and 02 First Communion 1). Alternate mixes share AcoustIDs, and a release can repeat a track on purpose (Cheer-Accident, The Why Album). | Proposed |
