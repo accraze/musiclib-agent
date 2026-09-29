@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-09-28 (doc rev 56)
+Last synced: 2026-09-28 (doc rev 57)
 -->
 
 # Music Library Agent — Spec
@@ -217,6 +217,7 @@ The library holds 3,314 albums (37,859 audio files, 382 GB) at /srv/data/media/m
 - **Review batches 2 and 3 (2026-09-28):** 37 more albums approved and imported; Moody Blues *Seventh Sojourn* skipped (the match was a DTS surround edition, but the files are stereo).
 - **Queue fix:** albums in any duplicate review group now wait in `dupe`. Before, the losing copy of an edition pair could appear as a close call. That imported Ike Quebec's *Heavy Soul* from a 192k copy instead of a 320k one; the library now holds the 320k copy.
 - **Damage is judged by decoding:** a failed fingerprint alone doesn't mean damage. 11 of 12 such files in the library play fully. Two truly broken tracks were removed from the library (Boards of Canada, 0.6 s of 4:37 decodes; Caetano Veloso, a truncated second copy); T. Rex *Scenescof Dynasty (take 4)* (14 s of 4:07) is pending.
+- **Review progress (2026-09-28):** 270 review albums imported: 143 under D21's standing approval, 127 approved batch by batch; 2 skipped for hand-pinning (Ramones *Leave Home*, Moody Blues *Seventh Sojourn*). The library now holds 3,566 albums (40,438 files, 407 GB). Still open: 200 close, 512 weak, 394 unmatched, 90 in duplicate review, 4 errors.
 
 ## Open questions
 
