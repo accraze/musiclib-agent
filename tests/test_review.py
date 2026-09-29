@@ -96,4 +96,17 @@ def _album(cands, confirmed=10, mismatch=0, files=10):
     (_album([cand("r1", 0.02), cand("r2", 0.5)]), [("mp3", "fingerprint: x")], False),
 ])
 def test_d21_check(album, meta, ok):
-    assert review.d21_check(album, meta)[0] is ok
+    assert review._d21(album, meta)[0] is ok  # D21 alone; D22 is tested below
+
+
+@pytest.mark.parametrize("album,ok", [
+    (_album([cand("r1", 0.04, ["artist"]), cand("r2", 0.7)], confirmed=0), True),         # exact, no data
+    (_album([cand("r1", 0.04), cand("r2", 0.25)], confirmed=0), False),                  # gap < 0.3
+    (_album([cand("r1", 0.04), cand("r2", 0.7)], confirmed=0, mismatch=1), False),        # a mismatch
+    (_album([cand("r1", 0.04, ["missing_tracks"], extra_tracks=1), cand("r2", 0.7)], confirmed=0), False),
+])
+def test_d22_exact_fit_without_acoustid_data(album, ok):
+    got, why = review.d21_check(album, [])
+    assert got is ok
+    if ok:
+        assert why.startswith("D22")

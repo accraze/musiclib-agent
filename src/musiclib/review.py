@@ -43,6 +43,8 @@ D21 = {"max_distance": 0.1, "min_gap": 0.15, "min_confirmed": 0.9, "max_mismatch
        "max_missing_tracks": 1, "max_extra_files": 2,
        "plausible_runner_up": 0.35}  # a runner-up this close that fits exactly is worth asking about
 D21_PENALTIES = COSMETIC | {"missing_tracks", "unmatched_tracks"}
+# D22: exact tracklist fits where AcoustID simply has no data (obscure releases).
+D22 = {"max_distance": 0.1, "min_gap": 0.3}
 VIDEO_EXTS = {"mp4", "m4v", "mkv", "webm", "mov", "avi"}
 
 
@@ -166,7 +168,36 @@ def decide(conn: sqlite3.Connection, decisions: list[dict], decided_by: str) -> 
 
 
 def d21_check(album: dict, files_meta: list[tuple]) -> tuple[bool, str]:
-    """(qualifies, why). `album` is a listing entry; files_meta = [(ext, error), ...]."""
+    """(qualifies, why) under D21, or else D22. `album` is a listing entry;
+    files_meta = [(ext, error), ...]."""
+    ok, why = _d21(album, files_meta)
+    if ok:
+        return ok, why
+    ok22, why22 = _d22(album, files_meta)
+    return (True, why22) if ok22 else (False, why)
+
+
+def _d22(album: dict, files_meta: list[tuple]) -> tuple[bool, str]:
+    cands, verify, n = album["candidates"], album["local"]["verify"], album["files"]
+    if not cands:
+        return False, "no candidates"
+    best = cands[0]
+    gap = (cands[1]["distance"] - best["distance"]) if len(cands) > 1 else 1.0
+    checks = [
+        best["distance"] < D22["max_distance"],
+        best["extra_items"] == 0 and best["extra_tracks"] == 0,
+        gap >= D22["min_gap"],
+        verify.get("mismatch", 0) == 0,
+        set(best["penalties"]) <= COSMETIC,
+        not any(ext in VIDEO_EXTS or err for ext, err in files_meta),
+    ]
+    if not all(checks):
+        return False, "not D22"
+    return True, (f"D22: exact {n}-track fit, d={best['distance']:.3f}, gap {gap:.2f}, 0 mismatch, "
+                  f"{verify.get('confirmed', 0)}/{n} confirmed (AcoustID lacks data)")
+
+
+def _d21(album: dict, files_meta: list[tuple]) -> tuple[bool, str]:
     cands, verify, n = album["candidates"], album["local"]["verify"], album["files"]
     if not cands:
         return False, "no candidates"
