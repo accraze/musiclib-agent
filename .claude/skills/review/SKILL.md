@@ -10,7 +10,7 @@ propose a decision per album, get the user's approval for the batch, then record
 
 Safety rules apply (docs/SPEC.md): never touch the dump, never record a decision the user
 hasn't approved (rule 7), every decision needs a reason. D21 is the user's standing approval
-for close calls that pass `review auto`'s criteria (D21, plus D22 for exact fits AcoustID has no data on; in `musiclib/review.py`); nothing else is
+for close calls that pass `review auto`'s criteria (D21, plus D22 for exact fits AcoustID has no data on) and for unmatched albums with no plausible candidate (D24, `review auto --kind none`); criteria in `musiclib/review.py`; nothing else is
 approved without asking.
 
 ## Loop
