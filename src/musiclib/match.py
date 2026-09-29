@@ -173,3 +173,78 @@ def summary(conn: sqlite3.Connection, top: int = 10) -> dict:
                    extra_tracks, note FROM matches WHERE action = 'review' ORDER BY random() LIMIT ?""",
             (top,))],
     }
+
+
+def _ensure_imports(conn: sqlite3.Connection) -> None:
+    from .importer import migrate
+    migrate(conn)
+
+
+def _audio_ids(conn: sqlite3.Connection, files: list[str]) -> set[str]:
+    marks = ",".join("?" * len(files))
+    return {r[0] for r in conn.execute(f"""
+        SELECT a.acoustid_id FROM files f JOIN acoustid_lookups a
+        ON a.fingerprint = f.fingerprint AND a.fp_duration = f.fp_duration
+        WHERE f.path IN ({marks}) AND a.acoustid_id IS NOT NULL""", files)}
+
+
+def merge_suggestions(conn: sqlite3.Connection) -> list[dict]:
+    """Undecided, unimported albums that look like parts of one release: same top-candidate
+    release, no shared audio between the parts (shared audio means copies, not parts), and
+    together no more files than the release has tracks (+2 for bonus files)."""
+    _ensure_imports(conn)
+    groups: dict[str, list] = {}
+    for m in conn.execute("""
+        SELECT m.album_key, m.files, m.candidates FROM matches m
+        LEFT JOIN imports i ON i.match_id = m.id AND i.status = 'imported'
+        WHERE m.decision IS NULL AND i.match_id IS NULL AND m.action IN ('review', 'auto')"""):
+        cands = json.loads(m["candidates"] or "[]")
+        if cands:
+            groups.setdefault(cands[0]["album_id"], []).append((m["album_key"], json.loads(m["files"]), cands[0]))
+    out = []
+    for rid, parts in groups.items():
+        if len(parts) < 2:
+            continue
+        release = parts[0][2]
+        total = sum(len(f) for _, f, _ in parts)
+        if total > release["tracks"] + 2:
+            continue
+        ids = [_audio_ids(conn, f) for _, f, _ in parts]
+        overlap = any(ids[i] & ids[j] for i in range(len(ids)) for j in range(i + 1, len(ids)))
+        if overlap:
+            continue
+        out.append({"release": rid, "title": f"{release['artist']} - {release['album']} ({release['year']})",
+                    "tracks": release["tracks"], "files": total, "albums": sorted(k for k, _, _ in parts)})
+    return out
+
+
+def merge(conn: sqlite3.Connection, source: Path, keys: list[str], *, apply: bool = False) -> dict:
+    """Combine several album folders into one album and re-match it. The merged album takes
+    the first key; the others are removed from the queue. Refuses decided or imported albums."""
+    _ensure_imports(conn)
+    rows = []
+    for k in keys:
+        r = conn.execute("SELECT m.*, i.status AS imported FROM matches m LEFT JOIN imports i "
+                         "ON i.match_id = m.id AND i.status = 'imported' WHERE m.album_key = ?", (k,)).fetchone()
+        if r is None:
+            raise SystemExit(f"unknown album: {k}")
+        if r["decision"] or r["imported"]:
+            raise SystemExit(f"{k}: already decided or imported")
+        rows.append(r)
+    dirs = [d for r in rows for d in json.loads(r["dirs"])]
+    files = sorted({f for r in rows for f in json.loads(r["files"])})
+    if not apply:
+        return {"dry_run": True, "into": keys[0], "dirs": dirs, "files": len(files)}
+    result = match_album(source, files, None)
+    row = {"album_key": keys[0], "dirs": json.dumps(dirs), "files": json.dumps(files),
+           "note": f"merged from {len(keys)} folders", "search_id": None, "matched_at": now(), **result}
+    with conn:
+        conn.executemany("DELETE FROM matches WHERE id = ?", [(r["id"],) for r in rows])
+        conn.execute(f"INSERT INTO matches ({', '.join(COLUMNS)}) VALUES ({', '.join('?' * len(COLUMNS))})",
+                     [row.get(c) for c in COLUMNS])
+        conn.execute("INSERT INTO audit_log (ts, action, source_path, reason, decided_by) "
+                     "VALUES (?, 'merge_albums', ?, ?, 'user')",
+                     (now(), keys[0], "merged: " + " + ".join(keys)))
+    return {"into": keys[0], "files": len(files), "action": row["action"],
+            "recommendation": row.get("recommendation"), "distance": row.get("distance"),
+            "album": f"{row.get('albumartist')} - {row.get('album')} ({row.get('year')})"}

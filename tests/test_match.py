@@ -82,3 +82,26 @@ def test_run_records_actions_and_resumes(env, monkeypatch):
     res = match.run(conn, src, progress=io.StringIO())
     assert (res["auto"], res["review"], res["unsorted"]) == (1, 1, 1)
     assert match.run(conn, src, progress=io.StringIO())["matched"] == 0
+
+
+def test_merge_combines_folders_and_rematches(env, monkeypatch):
+    src, conn, match = env
+    for disc in (1, 2):
+        for i in range(2):
+            add(src, conn, f"Box cd {disc}/{i}.mp3", f"d{disc}t{i}")
+    verify.run(conn)
+    dupes.find(conn)
+    same = json.dumps([{"album_id": "box", "artist": "A", "album": "Box", "year": 1991, "country": "US",
+                        "media": "CD", "tracks": 4, "distance": 0.5, "penalties": ["missing_tracks"],
+                        "extra_items": 0, "extra_tracks": 2}])
+    monkeypatch.setattr(match, "match_album",
+                        lambda s, files, sid: {"recommendation": "strong" if len(files) == 4 else "none",
+                                               "candidates": same, "action": "auto" if len(files) == 4 else "review",
+                                               "album_id": "box", "distance": 0.01 if len(files) == 4 else 0.5})
+    match.run(conn, src, progress=io.StringIO())
+    [sug] = match.merge_suggestions(conn)
+    assert (sug["release"], sug["albums"], sug["files"]) == ("box", ["Box cd 1/", "Box cd 2/"], 4)
+    out = match.merge(conn, src, ["Box cd 1/", "Box cd 2/"], apply=True)
+    assert out["files"] == 4 and out["action"] == "auto"
+    keys = [r[0] for r in conn.execute("SELECT album_key FROM matches")]
+    assert keys == ["Box cd 1/"]

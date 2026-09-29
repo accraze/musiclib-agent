@@ -109,6 +109,20 @@ def cmd_retag(cfg: config.Config, args) -> None:
         _emit({k: v for k, v in p.items() if not k.startswith("_")})
 
 
+def cmd_merge(cfg: config.Config, args) -> None:
+    from . import beetsenv
+    beetsenv.setup(cfg)
+    from . import match
+
+    conn = db.connect(cfg.db_path)
+    if args.suggest:
+        _emit(match.merge_suggestions(conn))
+    elif args.albums and len(args.albums) > 1:
+        _emit(match.merge(conn, cfg.source_dir, args.albums, apply=args.apply))
+    else:
+        raise SystemExit("--suggest, or --albums with two or more album keys")
+
+
 def cmd_report(cfg: config.Config, args) -> None:
     conn = db.connect(cfg.db_path)
     if args.not_imported:
@@ -198,6 +212,12 @@ def main(argv: list[str] | None = None) -> None:
     rt.add_argument("--by", choices=["agent", "user"], default="user")
     rt.add_argument("--reason")
     rt.set_defaults(func=cmd_retag)
+
+    mg = sub.add_parser("merge", help="combine folders of one release into one album and re-match it")
+    mg.add_argument("--suggest", action="store_true", help="list albums sharing a top-candidate release")
+    mg.add_argument("--albums", nargs="+", help="album keys to merge; the first names the result")
+    mg.add_argument("--apply", action="store_true")
+    mg.set_defaults(func=cmd_merge)
 
     rep = sub.add_parser("report", help="summarize the inventory as JSON")
     rep.add_argument("--top", type=int, default=10, help="examples per section")
