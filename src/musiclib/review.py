@@ -114,14 +114,25 @@ def listing(conn: sqlite3.Connection, kind: str, limit: int = 20, offset: int = 
         ORDER BY m.distance, m.album_key LIMIT ? OFFSET ?""", (limit, offset)).fetchall()
     total = conn.execute(
         f"SELECT COUNT(*) FROM matches m WHERE ({KIND_SQL[kind]}) AND m.decision IS NULL").fetchone()[0]
+    in_library = _imported_releases(conn)
     albums = []
     for m in rows:
         cands = json.loads(m["candidates"] or "[]")
         action, why = suggest(kind, cands)
+        already = sorted({in_library[c["album_id"]] for c in cands if c.get("album_id") in in_library})
+        if already:
+            action, why = "skip", f"a candidate release is already in the library (from {already[0]})"
         albums.append({"album_key": m["album_key"], "files": len(json.loads(m["files"])),
                        "local": _local(conn, json.loads(m["files"])), "candidates": cands,
-                       "note": m["note"], "suggest": action, "why": why})
+                       "note": m["note"], "suggest": action, "why": why, "already_in_library": already})
     return {"kind": kind, "remaining": total, "offset": offset, "albums": albums}
+
+
+def _imported_releases(conn: sqlite3.Connection) -> dict[str, str]:
+    """release id -> album folder it was imported from."""
+    return {r[0]: r[1] for r in conn.execute("""
+        SELECT i.album_id, m.album_key FROM imports i JOIN matches m ON m.id = i.match_id
+        WHERE i.status = 'imported' AND i.album_id IS NOT NULL""")}
 
 
 def stats(conn: sqlite3.Connection) -> dict:
@@ -170,6 +181,8 @@ def decide(conn: sqlite3.Connection, decisions: list[dict], decided_by: str) -> 
 def d21_check(album: dict, files_meta: list[tuple]) -> tuple[bool, str]:
     """(qualifies, why) under D21, or else D22. `album` is a listing entry;
     files_meta = [(ext, error), ...]."""
+    if album.get("already_in_library"):
+        return False, f"release already in the library (from {album['already_in_library'][0]})"
     ok, why = _d21(album, files_meta)
     if ok:
         return ok, why

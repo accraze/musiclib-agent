@@ -25,6 +25,8 @@ approved without asking.
      `verify`, the M2 fingerprint verdicts (`confirmed` = tags match the audio).
    - `candidates`: top 3 MusicBrainz releases with `distance` and `penalties`.
    - `suggest` / `why`: a rule-based starting point. It is only a hint; override it.
+   - `already_in_library`: folders already imported at one of its candidate releases. Usually
+     a duplicate copy: compare quality before proposing, and never import both.
 3. Decide each album (see Judgment). Present ONE table to the user:
    `# | album folder | decision | release (artist – album, year, country) | why`
    Group obvious approvals together; call out anything you're unsure about.
