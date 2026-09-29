@@ -20,6 +20,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import retag
+
 ART_EXTS = {"jpg", "jpeg", "png", "gif", "webp"}
 
 SCHEMA = """
@@ -366,6 +368,15 @@ def run(conn: sqlite3.Connection, source: Path, staging_root: Path, which: str, 
                      (a["id"], run_id, a["mode"], status, a["pin"], lib_dir,
                       len(moved) + len(extras), note, now()))
         conn.commit()
+        if status == "imported" and a["mode"] == "apply":
+            try:
+                d23 = retag.after_import(conn, lib, a["album_key"], files)
+            except Exception as e:  # never let the check break an import that succeeded
+                d23 = f"D23 check failed: {type(e).__name__}: {e}"[:200]
+            if d23:
+                note = f"{note}; {d23}" if note else d23
+                conn.execute("UPDATE imports SET note = ? WHERE match_id = ?", (note, a["id"]))
+                conn.commit()
         counts[status] += 1
         print(f"  [{n}/{len(albums)}] {status}: {a['album_key']} -> {lib_dir or note}",
               file=progress, flush=True)

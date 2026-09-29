@@ -96,3 +96,11 @@ def test_current_paths_follows_retags_and_removals(tmp_path):
     conn.executemany("INSERT INTO audit_log (ts, action, source_path, dest_path, decided_by) "
                      "VALUES ('now', ?, ?, ?, 'auto')", rows)
     assert importer.current_paths(conn) == {"a.mp3": "/lib/02 B2.mp3", "b.mp3": "/lib/02 B.mp3"}
+
+
+def test_after_import_does_nothing_without_swap_evidence(setup):
+    conn, build = setup
+    tracks = [track(1, "A", 100), track(2, "B", 200)]
+    lib = build([("A/1.mp3", 100, "rec-1"), ("A/2.mp3", 200, "rec-2")], tracks,
+                {"A/1.mp3": "rec-1", "A/2.mp3": "rec-2"})
+    assert retag.after_import(conn, lib, "A/", ["A/1.mp3", "A/2.mp3"]) is None

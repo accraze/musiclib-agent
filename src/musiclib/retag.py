@@ -31,29 +31,49 @@ def _fingerprint_ids(conn: sqlite3.Connection, rel: str) -> tuple[set[str], list
     return recs, titles
 
 
+def swap_count(conn: sqlite3.Connection, files: list[str]) -> int:
+    """Mismatched files whose audio fingerprints as *another track of the same album*."""
+    marks = ",".join("?" * len(files))
+    rows = conn.execute(f"""SELECT f.path, f.title, v.verdict, a.titles FROM files f
+        JOIN verify v ON v.file_id = f.id
+        LEFT JOIN acoustid_lookups a ON a.fingerprint = f.fingerprint AND a.fp_duration = f.fp_duration
+        WHERE f.path IN ({marks})""", files).fetchall()
+    own = {r["path"]: r["title"] for r in rows}
+    swapped = 0
+    for r in rows:
+        if r["verdict"] != "mismatch":
+            continue
+        ac = [t["title"] for t in json.loads(r["titles"] or "{}").values()]
+        if any(titles_agree(t, o) for t in ac for p, o in own.items() if p != r["path"] and o):
+            swapped += 1
+    return swapped
+
+
 def swap_suspects(conn: sqlite3.Connection, min_swapped: int = 2) -> list[dict]:
-    """Imported albums where mismatched files fingerprint as *another track of the same album*."""
+    """Imported albums with swapped-track evidence."""
     out = []
     for m in conn.execute("""
         SELECT m.id, m.album_key, m.files FROM matches m
         JOIN imports i ON i.match_id = m.id AND i.status = 'imported'"""):
         files = json.loads(m["files"])
-        marks = ",".join("?" * len(files))
-        rows = conn.execute(f"""SELECT f.path, f.title, v.verdict, a.titles FROM files f
-            JOIN verify v ON v.file_id = f.id
-            LEFT JOIN acoustid_lookups a ON a.fingerprint = f.fingerprint AND a.fp_duration = f.fp_duration
-            WHERE f.path IN ({marks})""", files).fetchall()
-        own = {r["path"]: r["title"] for r in rows}
-        swapped = 0
-        for r in rows:
-            if r["verdict"] != "mismatch":
-                continue
-            ac = [t["title"] for t in json.loads(r["titles"] or "{}").values()]
-            if any(titles_agree(t, o) for t in ac for p, o in own.items() if p != r["path"] and o):
-                swapped += 1
+        swapped = swap_count(conn, files)
         if swapped >= min_swapped:
             out.append({"album_key": m["album_key"], "files": len(files), "swapped": swapped})
     return out
+
+
+def after_import(conn: sqlite3.Connection, lib, album_key: str, files: list[str]) -> str | None:
+    """D23: relabel by fingerprint right after import when the pairing is clean; otherwise
+    return a note so the album is flagged. None when there is no swap evidence."""
+    if swap_count(conn, files) < 2:
+        return None
+    p = plan(conn, lib, album_key)
+    if not p["changes"]:
+        return None
+    if p["problems"]:
+        return f"swapped-track evidence but no clean pairing: run `musiclib retag --album` ({len(p['problems'])} issues)"
+    n = apply(conn, lib, album_key, "auto", "D23: tags were on the wrong audio (fingerprint and length agree)")
+    return f"D23 relabeled {n['retagged']} file(s) by fingerprint"
 
 
 def plan(conn: sqlite3.Connection, lib, album_key: str) -> dict:
