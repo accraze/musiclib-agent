@@ -104,3 +104,15 @@ def test_after_import_does_nothing_without_swap_evidence(setup):
     lib = build([("A/1.mp3", 100, "rec-1"), ("A/2.mp3", 200, "rec-2")], tracks,
                 {"A/1.mp3": "rec-1", "A/2.mp3": "rec-2"})
     assert retag.after_import(conn, lib, "A/", ["A/1.mp3", "A/2.mp3"]) is None
+
+
+def test_file_whose_audio_fits_its_tag_stays_even_if_ambiguous(setup):
+    conn, build = setup
+    tracks = [track(1, "Intro", 60), track(2, "Song", 200), track(3, "Song (reprise)", 200)]
+    lib = build([("A/1.mp3", 60, "rec-1"), ("A/2.mp3", 200, "rec-2")], tracks,
+                {"A/1.mp3": "rec-1", "A/2.mp3": "rec-2"})
+    # 2.mp3's fingerprint also links to track 3's recording; its tag (track 2) is among them.
+    conn.execute("UPDATE acoustid_lookups SET recordings = ? WHERE fingerprint = 'fp-A/2.mp3'",
+                 (json.dumps([{"id": "rec-2", "score": 0.95}, {"id": "rec-3", "score": 0.95}]),))
+    p = retag.plan(conn, lib, "A/")
+    assert p["problems"] == [] and p["changes"] == []

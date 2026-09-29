@@ -102,7 +102,9 @@ def plan(conn: sqlite3.Connection, lib, album_key: str) -> dict:
         recs, titles = _fingerprint_ids(conn, rel)
         cands = [t for t in info.tracks if t.track_id in recs] or \
                 [t for t in info.tracks if any(titles_agree(t.title, a) for a in titles)]
-        if len(cands) == 1:
+        if current is not None and any(t.track_id == current.track_id for t in cands):
+            assign[path] = (item, current, current)  # its audio fits its tag: leave it
+        elif len(cands) == 1:
             assign[path] = (item, current, cands[0])
         elif not recs and not titles:
             assign[path] = (item, current, current)  # no fingerprint data: leave as is
