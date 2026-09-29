@@ -35,7 +35,7 @@ An agent that manages a personal music library: organize, MusicBrainz-tag and de
 - beets runs only through `musiclib.beetsenv.setup()`, which generates `state/beets/config.yaml` from `musiclib.toml` and sets `BEETSDIR` (D9).
 - `uv run musiclib import [--which auto|unsorted|approved] [--limit N] [--apply]` — without `--apply` prints the plan only. With it: stage a copy of each album (WAV→FLAC), beets moves staging→library with the matched release pinned; unsorted albums go to `Unsorted/<dump folder>/` as-is. beets never sees dump paths. Every file gets an `audit_log` row.
 - `uv run musiclib report --not-imported` — D18 manifest: every dump file with its status (imported / duplicate + keeper / review / error / pending / unmatched), written to `state/reports/`.
-- `uv run musiclib review stats|list --kind K|decide --by agent|user` — M4 review queue. Use the `/review` skill (`.claude/skills/review/`); never record decisions the user has not approved; `review auto` applies the D21 standing approval only.
+- `uv run musiclib review stats|list --kind K|auto [--apply]|decide --by agent|user` — M4 review queue. Use the `/review` skill (`.claude/skills/review/`); never record decisions the user has not approved; `review auto` applies the D21 standing approval only.
 - `uv run musiclib import --remove LIBRARY_FILE --reason "..." [--by agent|user]` — remove one library file (beets DB + disk), logged; refuses paths outside the library.
 - `uv run musiclib import --repair-extras [--apply]` — place unmapped files missing from albums imported before D20.
 - `uv run musiclib import --prune-duplicates [--apply]` — remove library copies of files later found to be duplicates (uses audit_log; library only).
