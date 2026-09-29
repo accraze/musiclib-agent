@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-09-29 (doc rev 63)
+Last synced: 2026-09-29 (doc rev 64)
 -->
 
 # Music Library Agent — Spec
@@ -241,6 +241,7 @@ Every design decision is recorded here, newest first. To reverse one, mark it Su
 
 | # | Date | Decision | Rationale | Status |
 | --- | --- | --- | --- | --- |
+| D24 | 2026-09-29 | Unmatched albums (best candidate at distance 0.5 or worse) go to Unsorted/ as-is without asking when no candidate's album title matches the folder's album tag (exact or near-exact, or whole-word containment of 8+ characters), the album isn't flagged as a possible duplicate, and it has no video files. | In three batches, every partial-album approval had a title-matching candidate and no Unsorted decision did. Covers 43% of unmatched albums (135 on 2026-09-29); box-set discs, duplicates and title matches are still asked. | Accepted |
 | D23 | 2026-09-28 | After every import, albums whose files fingerprint as other tracks of the same album are relabeled by fingerprint automatically, but only when the pairing is one-to-one and every move is supported by track length (equal-length tracks count as no evidence). Otherwise the album is flagged for musiclib retag --album. All changes are logged. | beets pairs files with release tracks by title tag, so scrambled albums import with titles on the wrong songs (Dr. Dre The Chronic: 10 of 11). 10 imported albums (31 files) were fixed this way; where lengths contradicted AcoustID (Serious Times, Singers & Players) the tags were right and nothing changed. | Accepted |
 | D22 | 2026-09-28 | Extends D21 to exact fits that AcoustID has no data on: approved without asking when every file maps and nothing is missing, the gap to the runner-up is at least 0.3, there are zero fingerprint mismatches, penalties are cosmetic, and there are no video or scan-error files. | In batches 8 and 9, 9 of 20 albums were exactly this case (obscure releases such as Sun Ra, Sky Saxon, Zs) and all were approved; a missing fingerprint is absence of evidence, not a conflict. | Accepted |
 | D21 | 2026-09-28 | Standing approval for clear close calls: the agent approves, without asking, any close call where the gap to the runner-up is at least 0.15, at least 90% of files are fingerprint-confirmed with at most 1 mismatch, at most 1 release track is missing and at most 2 files are extra, penalties are cosmetic, no plausible runner-up (under 0.35) fits the files exactly, and there are no video or scan-error files. Each approval is logged with the criteria; everything else is asked. | In five batches every album meeting these criteria was approved; asking about them cost attention the ambiguous ones need. Criteria live in code (musiclib review auto), not in judgment. | Accepted |
