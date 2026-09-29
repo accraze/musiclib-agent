@@ -9,13 +9,18 @@ Albums land here when `musiclib match` found no strong MusicBrainz match (D15). 
 propose a decision per album, get the user's approval for the batch, then record and import.
 
 Safety rules apply (docs/SPEC.md): never touch the dump, never record a decision the user
-hasn't approved (rule 7), every decision needs a reason.
+hasn't approved (rule 7), every decision needs a reason. D21 is the user's standing approval
+for close calls that pass `review auto`'s criteria (in `musiclib/review.py`); nothing else is
+approved without asking.
 
 ## Loop
 
 1. `uv run musiclib review stats` to see what's open. Work kinds in this order:
    `close` → `weak` → `none` → `dupe` → `error`.
-2. `uv run musiclib review list --kind <kind> --limit 20` for a batch. Each album carries:
+2. For `close`: `uv run musiclib review auto --limit 20` (dry run) splits the batch into D21
+   approvals and albums to ask about. Run it again with `--apply` to record the D21 approvals,
+   import them (step 6), and report them in one line each. Then present only the `ask` rows.
+   For other kinds: `uv run musiclib review list --kind <kind> --limit 20`. Each album carries:
    - `local`: what the files say (majority artist/album/date, sample titles, minutes) and
      `verify`, the M2 fingerprint verdicts (`confirmed` = tags match the audio).
    - `candidates`: top 3 MusicBrainz releases with `distance` and `penalties`.

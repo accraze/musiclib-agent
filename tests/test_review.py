@@ -78,3 +78,22 @@ def test_album_in_a_dupe_review_group_is_never_a_close_call(conn):
     conn.commit()
     assert review.listing(conn, "close")["albums"] == []
     assert [a["album_key"] for a in review.listing(conn, "dupe")["albums"]] == ["Close/"]
+
+
+def _album(cands, confirmed=10, mismatch=0, files=10):
+    return {"candidates": cands, "files": files,
+            "local": {"verify": {"confirmed": confirmed, "mismatch": mismatch}}}
+
+
+@pytest.mark.parametrize("album,meta,ok", [
+    (_album([cand("r1", 0.02, ["missing_tracks"], extra_tracks=1), cand("r2", 0.4)]), [], True),
+    (_album([cand("r1", 0.02, ["missing_tracks"], extra_tracks=1), cand("r2", 0.1)]), [], False),   # gap
+    (_album([cand("r1", 0.02), cand("r2", 0.5)], confirmed=8), [], False),                        # 80% confirmed
+    (_album([cand("r1", 0.02), cand("r2", 0.5)], mismatch=2), [], False),
+    (_album([cand("r1", 0.02, [], extra_items=1), cand("r2", 0.3)]), [], False),   # runner-up fits exactly
+    (_album([cand("r1", 0.02, ["album_id"]), cand("r2", 0.5)]), [], False),        # structural penalty
+    (_album([cand("r1", 0.02), cand("r2", 0.5)]), [("mp4", None)], False),         # video file
+    (_album([cand("r1", 0.02), cand("r2", 0.5)]), [("mp3", "fingerprint: x")], False),
+])
+def test_d21_check(album, meta, ok):
+    assert review.d21_check(album, meta)[0] is ok

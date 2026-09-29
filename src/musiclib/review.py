@@ -38,6 +38,13 @@ COSMETIC = {"artist", "album", "year", "country", "media", "label", "catalognum"
             "albumdisambig", "albumstatus", "mediums", "tracks", "track_title", "track_artist"}
 DECISIONS = {"approve", "asis", "skip"}
 
+# D21: standing user approval for close calls that meet ALL of these. Anything else is asked.
+D21 = {"max_distance": 0.1, "min_gap": 0.15, "min_confirmed": 0.9, "max_mismatch": 1,
+       "max_missing_tracks": 1, "max_extra_files": 2,
+       "plausible_runner_up": 0.35}  # a runner-up this close that fits exactly is worth asking about
+D21_PENALTIES = COSMETIC | {"missing_tracks", "unmatched_tracks"}
+VIDEO_EXTS = {"mp4", "m4v", "mkv", "webm", "mov", "avi"}
+
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -156,3 +163,49 @@ def decide(conn: sqlite3.Connection, decisions: list[dict], decided_by: str) -> 
                          (now(), f"decide_{decision}", key,
                           reason + (f" (release {album_id})" if album_id else ""), decided_by))
     return {"recorded": len(rows), **Counter(r[2] for r in rows)}
+
+
+def d21_check(album: dict, files_meta: list[tuple]) -> tuple[bool, str]:
+    """(qualifies, why). `album` is a listing entry; files_meta = [(ext, error), ...]."""
+    cands, verify, n = album["candidates"], album["local"]["verify"], album["files"]
+    if not cands:
+        return False, "no candidates"
+    best = cands[0]
+    runner = cands[1] if len(cands) > 1 else None
+    gap = (runner["distance"] - best["distance"]) if runner else 1.0
+    checks = [
+        (best["distance"] < D21["max_distance"], f"distance {best['distance']:.3f}"),
+        (gap >= D21["min_gap"], f"gap {gap:.2f}"),
+        (verify.get("confirmed", 0) / n >= D21["min_confirmed"], f"{verify.get('confirmed', 0)}/{n} confirmed"),
+        (verify.get("mismatch", 0) <= D21["max_mismatch"], f"{verify.get('mismatch', 0)} mismatch"),
+        (best["extra_tracks"] <= D21["max_missing_tracks"], f"{best['extra_tracks']} missing tracks"),
+        (best["extra_items"] <= D21["max_extra_files"], f"{best['extra_items']} extra files"),
+        (set(best["penalties"]) <= D21_PENALTIES, f"penalties {sorted(set(best['penalties']) - D21_PENALTIES)}"),
+        (not (runner and runner["distance"] < D21["plausible_runner_up"]
+              and not runner["extra_items"] and not runner["extra_tracks"]
+              and (best["extra_items"] or best["extra_tracks"])), "runner-up fits the files exactly"),
+        (not any(ext in VIDEO_EXTS or err for ext, err in files_meta), "video or scan-error file"),
+    ]
+    failed = [why for ok, why in checks if not ok]
+    if failed:
+        return False, "; ".join(failed)
+    return True, (f"D21: d={best['distance']:.3f}, gap {gap:.2f}, {verify.get('confirmed', 0)}/{n} confirmed, "
+                  f"{best['extra_tracks']} missing, {best['extra_items']} extra")
+
+
+def auto_approve(conn: sqlite3.Connection, *, limit: int = 20, apply: bool = False) -> dict:
+    """Split the next `limit` close calls into D21 approvals and albums to ask about."""
+    batch = listing(conn, "close", limit)
+    auto, ask = [], []
+    for a in batch["albums"]:
+        files = json.loads(conn.execute("SELECT files FROM matches WHERE album_key = ?",
+                                        (a["album_key"],)).fetchone()[0])
+        marks = ",".join("?" * len(files))
+        meta = conn.execute(f"SELECT ext, error FROM files WHERE path IN ({marks})", files).fetchall()
+        ok, why = d21_check(a, [tuple(m) for m in meta])
+        (auto if ok else ask).append({**a, "d21": why})
+    recorded = None
+    if apply and auto:
+        recorded = decide(conn, [{"album_key": a["album_key"], "decision": "approve", "reason": a["d21"]}
+                                 for a in auto], "agent")
+    return {"auto": auto, "ask": ask, "recorded": recorded, "remaining": batch["remaining"]}
