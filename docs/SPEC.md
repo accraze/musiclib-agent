@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-09-28 (doc rev 62)
+Last synced: 2026-09-29 (doc rev 63)
 -->
 
 # Music Library Agent — Spec
@@ -220,6 +220,7 @@ The library holds 3,314 albums (37,859 audio files, 382 GB) at /srv/data/media/m
 - **Review progress (2026-09-28):** 270 review albums imported: 143 under D21's standing approval, 127 approved batch by batch; 2 skipped for hand-pinning (Ramones *Leave Home*, Moody Blues *Seventh Sojourn*). The library now holds 3,566 albums (40,438 files, 407 GB). Still open: 200 close, 512 weak, 394 unmatched, 90 in duplicate review, 4 errors.
 - **Swapped tracks fixed (2026-09-28):** 31 files in 10 imported albums had titles on the wrong audio (e.g. DJ Cam "Honey" and "James" swapped). They were relabeled by fingerprint, with track length as independent confirmation. Potshot *Till I Die* is left for a hand fix: 7 tracks are swapped, and 3 files are songs from another release.
 - **D23 on import (batch 10):** fixed Dr. Dre *The Chronic* (11 files), Jedi Mind Tricks *Visions of Gandhi* (4) and DJ Koze *Knock Knock* (2). Six flagged albums are left as they are: AcoustID is wrong where lengths disagree (*Serious Times*, Singers & Players), tracks come from other releases (*Till I Die*, *Truth and Wizdom*), or there are alternate takes with the same title (Savoy/Dial, Grandmothers).
+- **Split releases merged (2026-09-29):** 22 releases spread over several folders (disc 1/disc 2, reels, parts) were merged into one album each and re-matched. 13 became strong matches and were imported (e.g. Basinski *The Disintegration Loops*, Lee Perry *Arkology*); 9 are back in the review queue. Two more duplicate copies were caught by the new already-in-library check (Pink Fairies, A.R. & Machines). Library: 3,671 albums, 41,745 files, 419 GB. Open: 126 close, 479 weak, 364 unmatched, 89 in duplicate review, 4 errors.
 
 ## Open questions
 
