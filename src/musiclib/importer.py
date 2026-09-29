@@ -446,6 +446,22 @@ def repair_extras(conn: sqlite3.Connection, source: Path, *, apply: bool = False
     return {"repaired_albums": fixed}
 
 
+PLACED_ACTIONS = ("import", "import_asis", "import_extra", "retag_by_fingerprint")
+
+
+def current_paths(conn: sqlite3.Connection, sources: list[str] | None = None) -> dict[str, str]:
+    """dump file -> its library path now (latest import/retag row), minus files since removed."""
+    marks = ",".join("?" * len(PLACED_ACTIONS))
+    rows = conn.execute(f"""SELECT source_path, dest_path FROM audit_log
+        WHERE action IN ({marks}) AND dest_path IS NOT NULL ORDER BY id""", PLACED_ACTIONS).fetchall()
+    out = {}
+    for src, dest in rows:
+        if sources is None or src in sources:
+            out[src] = dest
+    removed = {r[0] for r in conn.execute("SELECT dest_path FROM audit_log WHERE action = 'remove_from_library'")}
+    return {s: d for s, d in out.items() if d not in removed}
+
+
 def remove_from_library(conn: sqlite3.Connection, dest: str, reason: str, decided_by: str) -> dict:
     """Remove one library file (beets DB and disk), logged. Never touches the dump."""
     import beets
@@ -456,8 +472,7 @@ def remove_from_library(conn: sqlite3.Connection, dest: str, reason: str, decide
         raise SystemExit(f"{dest} is not inside the library ({library_dir})")
     if not path.exists():
         raise SystemExit(f"{dest} does not exist")
-    src = conn.execute("SELECT source_path FROM audit_log WHERE dest_path = ? AND action LIKE 'import%' "
-                       "ORDER BY id DESC LIMIT 1", (str(path),)).fetchone()
+    src = next(((s,) for s, d in current_paths(conn).items() if d == str(path)), None)
     lib = open_library()
     item = next((i for i in lib.items() if os.fsdecode(i.path) == str(path)), None)
     if item is not None:

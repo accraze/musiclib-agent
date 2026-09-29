@@ -99,7 +99,8 @@ def not_imported(conn: sqlite3.Connection) -> tuple[dict, list[dict]]:
     unmatched (not in any album, e.g. loose root files).
     """
     status: dict[str, tuple[str, str | None]] = {}
-    for r in conn.execute("SELECT source_path, dest_path FROM audit_log WHERE action LIKE 'import%'"):
+    for r in conn.execute("SELECT source_path, dest_path FROM audit_log "
+                          "WHERE action LIKE 'import%' OR action = 'retag_by_fingerprint' ORDER BY id"):
         status[r[0]] = ("imported", r[1])
     for r in conn.execute("SELECT source_path, reason FROM audit_log WHERE action = 'skip_extra'"):
         status[r[0]] = ("skipped", r[1])

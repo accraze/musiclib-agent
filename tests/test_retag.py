@@ -81,3 +81,18 @@ def test_file_from_another_release_is_a_problem(setup):
                 {"A/1.mp3": "rec-1", "A/2.mp3": "rec-2"})
     p = retag.plan(conn, lib, "A/")
     assert any("0 candidate tracks" in x for x in p["problems"])
+
+
+def test_tmp_name_keeps_extension():
+    from pathlib import Path
+    assert retag.tmp_name(Path("/l/05 Song.flac")) == Path("/l/05 Song.retag-tmp.flac")
+
+
+def test_current_paths_follows_retags_and_removals(tmp_path):
+    conn = db.connect(tmp_path / "m.db")
+    rows = [("import", "a.mp3", "/lib/01 A.mp3"), ("import", "b.mp3", "/lib/02 B.mp3"),
+            ("retag_by_fingerprint", "a.mp3", "/lib/02 B2.mp3"), ("import", "c.mp3", "/lib/03 C.mp3"),
+            ("remove_from_library", "c.mp3", "/lib/03 C.mp3")]
+    conn.executemany("INSERT INTO audit_log (ts, action, source_path, dest_path, decided_by) "
+                     "VALUES ('now', ?, ?, ?, 'auto')", rows)
+    assert importer.current_paths(conn) == {"a.mp3": "/lib/02 B2.mp3", "b.mp3": "/lib/02 B.mp3"}

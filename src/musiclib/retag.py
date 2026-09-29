@@ -68,10 +68,10 @@ def plan(conn: sqlite3.Connection, lib, album_key: str) -> dict:
     info = metadata_plugins.album_for_id(m["album_id"])
     if info is None:
         raise SystemExit(f"{album_key}: release {m['album_id']} not found")
+    from .importer import current_paths
+
     by_path = {os.fsdecode(i.path): i for i in lib.items()}
-    dest = dict(conn.execute(
-        "SELECT source_path, dest_path FROM audit_log WHERE action = 'import' AND source_path IN "
-        "(SELECT value FROM json_each(?))", (m["files"],)).fetchall())
+    dest = current_paths(conn, set(json.loads(m["files"])))
 
     assign, problems = {}, []
     for rel, path in dest.items():
@@ -111,21 +111,31 @@ def plan(conn: sqlite3.Connection, lib, album_key: str) -> dict:
             "_info": info, "_assign": assign}
 
 
+def tmp_name(path: Path) -> Path:
+    """Temporary name that keeps the real extension (beets builds the final name from it)."""
+    return path.with_name(path.stem + ".retag-tmp" + path.suffix)
+
+
 def apply(conn: sqlite3.Connection, lib, album_key: str, decided_by: str, reason: str) -> dict:
     from beets import autotag
 
     p = plan(conn, lib, album_key)
     if p["problems"]:
         raise SystemExit(f"{album_key}: not a clean pairing, nothing changed: {p['problems']}")
-    moving = [(item, cur, tr) for item, cur, tr in p["_assign"].values()
+    from .importer import current_paths
+
+    rel_of = {d: s for s, d in current_paths(conn).items()}
+    moving = [(item, cur, tr, rel_of.get(os.fsdecode(item.path))) for item, cur, tr in p["_assign"].values()
               if tr is not None and (cur is None or cur.track_id != tr.track_id)]
-    # Step aside first so swapped files don't collide on each other's names.
-    for item, _, _ in moving:
-        tmp = os.fsdecode(item.path) + ".retag-tmp"
-        os.rename(os.fsdecode(item.path), tmp)
-        item.path = os.fsencode(tmp)
+    # Step aside first so swapped files don't collide on each other's names. Keep the real
+    # extension: beets builds the final name from it.
+    for item, _, _, _ in moving:
+        old = Path(os.fsdecode(item.path))
+        tmp = tmp_name(old)
+        os.rename(old, tmp)
+        item.path = os.fsencode(str(tmp))
         item.store()
-    for item, cur, tr in moving:
+    for item, cur, tr, rel in moving:
         before = cur.title if cur else None
         autotag.apply_metadata(p["_info"], [(item, tr)])
         item.try_write()
@@ -133,7 +143,7 @@ def apply(conn: sqlite3.Connection, lib, album_key: str, decided_by: str, reason
         item.store()
         conn.execute("INSERT INTO audit_log (ts, action, source_path, dest_path, reason, decided_by) "
                      "VALUES (?, 'retag_by_fingerprint', ?, ?, ?, ?)",
-                     (now(), album_key, os.fsdecode(item.path),
+                     (now(), rel, os.fsdecode(item.path),
                       f"{reason}: was '{before}', audio is '{tr.title}' (track {tr.index})", decided_by))
     conn.commit()
     return {"album_key": album_key, "retagged": len(moving)}
