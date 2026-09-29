@@ -234,3 +234,20 @@ def test_undecodable_file_never_reaches_the_library(env, monkeypatch):
     assert sorted(p.name for p in lib.iterdir()) == ["01 Song 1.mp3", "03 Song 3.flac"]
     row = conn.execute("SELECT reason FROM audit_log WHERE action = 'skip_extra'").fetchone()
     assert row["reason"].startswith("damaged")
+
+
+@pytest.mark.parametrize("name,title,minutes,others,expected", [
+    ("01 The Faust Tapes.mp3", "Several Hands on Our Piano", 43.7, [1.5] * 26, True),        # named like the album
+    ("Nipponjin (Full Album).mp3", "The Cave", 54.0, [5.0] * 10, True),                       # says full album
+    ("07 Gong ORFT Invasion 1971.mp3", "The Switch Doctor", 28.6, [5.3, 3.8, 3.9, 4.8, 2.0, 4.2], False),
+    ("03 - Cake (Who Shit On The ).mp3", "Cake", 9.1, [0.8, 3.6, 4.5], False),                 # only 3 others
+])
+def test_whole_album_file_needs_length_and_name(env, name, title, minutes, others, expected):
+    cfg, conn, importer = env
+    album = {"01 The Faust Tapes.mp3": "The Faust Tapes", "Nipponjin (Full Album).mp3": "Nipponjin"}.get(
+        name, "Some Album")
+    files = [f"X/{name}"] + [f"X/{i:02d} t.mp3" for i in range(len(others))]
+    rows = [(files[0], title, album, minutes * 60)] + [(f, "t", album, m * 60) for f, m in zip(files[1:], others)]
+    conn.executemany("INSERT INTO files (path, top_dir, ext, size, mtime, title, album, duration, scanned_at) "
+                     "VALUES (?, 'X', 'mp3', 1, 0, ?, ?, ?, 'now')", rows)
+    assert importer._is_whole_album_file(conn, files[0], files) is expected

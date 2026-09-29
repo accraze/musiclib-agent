@@ -228,13 +228,28 @@ def extra_skip_reason(conn: sqlite3.Connection, source: Path, rel: str, album_fi
             return "video file, not audio"
     if is_damaged(conn, source, rel):
         return "damaged file: less than half of it decodes"
+    if _is_whole_album_file(conn, rel, album_files):
+        return "whole album as one file; the split tracks were imported"
+    return None
+
+
+def _is_whole_album_file(conn: sqlite3.Connection, rel: str, album_files: list[str]) -> bool:
+    """Long AND named like the album (or 'full album') AND there are real split tracks.
+    Length alone misfires: a 28-minute live bonus or a 9-minute track on a 3-track 10"."""
+    from .verify import norm_title
+
     marks = ",".join("?" * len(album_files))
     durs = dict(conn.execute(f"SELECT path, COALESCE(duration, 0) FROM files WHERE path IN ({marks})",
                              album_files).fetchall())
-    others = sum(d for f, d in durs.items() if f != rel)
-    if others and durs.get(rel, 0) >= 0.8 * others:
-        return "whole album as one file; the split tracks were imported"
-    return None
+    others = [d for f, d in durs.items() if f != rel]
+    if len(others) < 4 or durs.get(rel, 0) < 0.8 * sum(others):
+        return False
+    row = conn.execute("SELECT title, album FROM files WHERE path = ?", (rel,)).fetchone()
+    title, album = (row[0], row[1]) if row else (None, None)
+    names = [norm_title(Path(rel).stem), norm_title(title)]
+    album_n = norm_title(album)
+    return any("full album" in n or (album_n and album_n in n) for n in names if n) or \
+        "full album" in Path(rel).stem.lower()
 
 
 def _skip_rows(run_id, skipped, decided_by):
