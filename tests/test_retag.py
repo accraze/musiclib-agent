@@ -116,3 +116,12 @@ def test_file_whose_audio_fits_its_tag_stays_even_if_ambiguous(setup):
                  (json.dumps([{"id": "rec-2", "score": 0.95}, {"id": "rec-3", "score": 0.95}]),))
     p = retag.plan(conn, lib, "A/")
     assert p["problems"] == [] and p["changes"] == []
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Игорь Фёдорович Стравинский", True), ("久石譲", True), ("Béla Bartók", False),
+    ("Leftöver Crack", False), ("Bonnie “Prince” Billy", False), ("Melt‐Banana", False), (None, False),
+])
+def test_non_latin(text, expected):
+    from musiclib import resync
+    assert resync.non_latin(text) is expected

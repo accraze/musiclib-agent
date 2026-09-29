@@ -457,7 +457,7 @@ def repair_extras(conn: sqlite3.Connection, source: Path, *, apply: bool = False
     return {"repaired_albums": fixed}
 
 
-PLACED_ACTIONS = ("import", "import_asis", "import_extra", "retag_by_fingerprint")
+PLACED_ACTIONS = ("import", "import_asis", "import_extra", "retag_by_fingerprint", "relocate")
 
 
 def current_paths(conn: sqlite3.Connection, sources: list[str] | None = None) -> dict[str, str]:

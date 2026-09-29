@@ -123,6 +123,15 @@ def cmd_merge(cfg: config.Config, args) -> None:
         raise SystemExit("--suggest, or --albums with two or more album keys")
 
 
+def cmd_resync(cfg: config.Config, args) -> None:
+    from . import beetsenv
+    beetsenv.setup(cfg)
+    from . import resync
+
+    conn = db.connect(cfg.db_path)
+    _emit(resync.run(conn, apply=args.apply, limit=args.limit))
+
+
 def cmd_report(cfg: config.Config, args) -> None:
     conn = db.connect(cfg.db_path)
     if args.not_imported:
@@ -219,6 +228,11 @@ def main(argv: list[str] | None = None) -> None:
     mg.add_argument("--albums", nargs="+", help="album keys to merge; the first names the result")
     mg.add_argument("--apply", action="store_true")
     mg.set_defaults(func=cmd_merge)
+
+    rs = sub.add_parser("resync", help="D25: re-fetch non-Latin-script albums so English artist names apply")
+    rs.add_argument("--apply", action="store_true")
+    rs.add_argument("--limit", type=int)
+    rs.set_defaults(func=cmd_resync)
 
     rep = sub.add_parser("report", help="summarize the inventory as JSON")
     rep.add_argument("--top", type=int, default=10, help="examples per section")
