@@ -137,6 +137,18 @@ def cmd_resync(cfg: config.Config, args) -> None:
         _emit(resync.run(conn, apply=args.apply, limit=args.limit))
 
 
+def cmd_ingest(cfg: config.Config, args) -> None:
+    from . import ingest
+
+    conn = db.connect(cfg.db_path)
+    if args.ingest_cmd == "list":
+        _emit(ingest.listing(conn, cfg))
+    elif args.ingest_cmd == "claim":
+        _emit(ingest.claim(conn, cfg, args.folder, apply=args.apply, decided_by=args.by))
+    elif args.ingest_cmd == "scan":
+        _emit(ingest.scan(conn, cfg, args.batch, workers=args.workers))
+
+
 def cmd_report(cfg: config.Config, args) -> None:
     conn = db.connect(cfg.db_path)
     if args.not_imported:
@@ -238,6 +250,18 @@ def main(argv: list[str] | None = None) -> None:
     rs.add_argument("--apply", action="store_true")
     rs.add_argument("--limit", type=int)
     rs.set_defaults(func=cmd_resync)
+
+    ing = sub.add_parser("ingest", help="M5: take new folders from the inbox through the pipeline")
+    isub = ing.add_subparsers(dest="ingest_cmd", required=True)
+    isub.add_parser("list", help="folders waiting in the inbox, and claimed batches")
+    ic = isub.add_parser("claim", help="D28: move a folder to inbox/.processed/<date>/ (dry run without --apply)")
+    ic.add_argument("folder", help="folder name inside inbox_dir")
+    ic.add_argument("--apply", action="store_true")
+    ic.add_argument("--by", choices=["agent", "user"], default="user")
+    isc = isub.add_parser("scan", help="inventory + AcoustID + verify for one batch (read-only on files)")
+    isc.add_argument("--batch", required=True, help="batch id or folder name")
+    isc.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2))
+    ing.set_defaults(func=cmd_ingest)
 
     rep = sub.add_parser("report", help="summarize the inventory as JSON")
     rep.add_argument("--top", type=int, default=10, help="examples per section")
