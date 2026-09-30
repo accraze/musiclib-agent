@@ -220,8 +220,10 @@ def is_damaged(conn: sqlite3.Connection, source: Path, rel: str) -> bool:
     return decodable_seconds(source / rel) < MIN_DECODABLE * expected if expected else True
 
 
-def extra_skip_reason(conn: sqlite3.Connection, source: Path, rel: str, album_files: list[str]) -> str | None:
-    """Why an unmapped file shouldn't go into the album folder, or None to keep it."""
+def extra_skip_reason(conn: sqlite3.Connection, source: Path, rel: str, album_files: list[str],
+                      imported: list[str] = ()) -> str | None:
+    """Why an unmapped file shouldn't go into the album folder, or None to keep it.
+    `imported`: dump files of this album that beets did place (for the duplicate check)."""
     if rel.rsplit(".", 1)[-1].lower() in VIDEO_EXTS:
         probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries",
                                 "stream=codec_name", "-of", "csv=p=0", str(source / rel)],
@@ -232,6 +234,25 @@ def extra_skip_reason(conn: sqlite3.Connection, source: Path, rel: str, album_fi
         return "damaged file: less than half of it decodes"
     if _is_whole_album_file(conn, rel, album_files):
         return "whole album as one file; the split tracks were imported"
+    dup = _duplicate_of(conn, rel, imported)
+    if dup:
+        return f"duplicate of '{dup}', already imported on this album"
+    return None
+
+
+def _duplicate_of(conn: sqlite3.Connection, rel: str, imported: list[str]) -> str | None:
+    """Same title tag and a length within 3 s of a file already imported on the album: a second
+    copy. A bonus track with a copied title tag has a different length and is kept."""
+    if not imported:
+        return None
+    me = conn.execute("SELECT lower(trim(title)), duration FROM files WHERE path = ?", (rel,)).fetchone()
+    if not me or not me[0] or me[1] is None:
+        return None
+    marks = ",".join("?" * len(imported))
+    for title, dur, orig in conn.execute(f"SELECT lower(trim(title)), duration, title FROM files "
+                                         f"WHERE path IN ({marks})", list(imported)):
+        if title == me[0] and dur is not None and abs(dur - me[1]) <= 3:
+            return orig
     return None
 
 
@@ -336,7 +357,7 @@ def run(conn: sqlite3.Connection, source: Path, staging_root: Path, which: str, 
                     for st, rel in mapping.items():
                         if st in done:
                             continue
-                        why = extra_skip_reason(conn, source, rel, files)
+                        why = extra_skip_reason(conn, source, rel, files, [mapping[b] for b in done])
                         (skipped.append((rel, why)) if why else leftover.append((Path(st), rel)))
                     extras = place_extras(Path(moved[0][1]).parent, leftover, move=True)
             placed = len(moved) + len(extras) + len(skipped)
@@ -439,7 +460,9 @@ def repair_extras(conn: sqlite3.Connection, source: Path, *, apply: bool = False
     fixed = 0
     for r, missing in todo:
         album_files = json.loads(r["files"])
-        skipped = [(f, why) for f in missing if (why := extra_skip_reason(conn, source, f, album_files))]
+        placed_before = [f for f in album_files if f not in missing]
+        skipped = [(f, why) for f in missing
+                   if (why := extra_skip_reason(conn, source, f, album_files, placed_before))]
         missing = [f for f in missing if f not in dict(skipped)]
         conn.executemany("INSERT INTO audit_log (ts, run_id, action, source_path, dest_path, reason, decided_by) "
                          "VALUES (?, ?, ?, ?, ?, ?, ?)", _skip_rows(None, skipped, r["decided_by"] or "auto"))

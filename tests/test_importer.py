@@ -251,3 +251,18 @@ def test_whole_album_file_needs_length_and_name(env, name, title, minutes, other
     conn.executemany("INSERT INTO files (path, top_dir, ext, size, mtime, title, album, duration, scanned_at) "
                      "VALUES (?, 'X', 'mp3', 1, 0, ?, ?, ?, 'now')", rows)
     assert importer._is_whole_album_file(conn, files[0], files) is expected
+
+
+def test_extra_duplicating_an_imported_track_is_skipped_but_bonus_with_copied_title_is_kept(env):
+    cfg, conn, importer = env
+    rows = [("W/GH 07 Greasy Legs.mp3", "Greasy Legs", 147.0),     # mapped by beets
+            ("W/07 - greasy legs.mp3", "Greasy Legs", 148.0),      # leftover second copy
+            ("W/GH 20 In The First Place.mp3", "In the Park", 197.0),  # bonus with a copied title
+            ("W/GH 04 In The Park.mp3", "In the Park", 248.0)]     # mapped by beets
+    conn.executemany("INSERT INTO files (path, top_dir, ext, size, mtime, title, duration, scanned_at) "
+                     "VALUES (?, 'W', 'mp3', 1, 0, ?, ?, 'now')", rows)
+    files = [r[0] for r in rows]
+    placed = ["W/GH 07 Greasy Legs.mp3", "W/GH 04 In The Park.mp3"]
+    why = importer.extra_skip_reason(conn, cfg.source_dir, "W/07 - greasy legs.mp3", files, placed)
+    assert why and why.startswith("duplicate of 'Greasy Legs'")
+    assert importer.extra_skip_reason(conn, cfg.source_dir, "W/GH 20 In The First Place.mp3", files, placed) is None
