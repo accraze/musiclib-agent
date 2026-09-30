@@ -46,7 +46,9 @@ def now() -> str:
 
 
 def migrate(conn: sqlite3.Connection) -> None:
+    from .acoustid import migrate as acoustid_migrate
     from .match import SCHEMA as MATCH_SCHEMA
+    acoustid_migrate(conn)
     conn.executescript(MATCH_SCHEMA + SCHEMA)
     cols = {r[1] for r in conn.execute("PRAGMA table_info(matches)")}
     # Reviewer decisions (M4) live on the match row.
@@ -245,13 +247,16 @@ def _duplicate_of(conn: sqlite3.Connection, rel: str, imported: list[str]) -> st
     copy. A bonus track with a copied title tag has a different length and is kept."""
     if not imported:
         return None
-    me = conn.execute("SELECT lower(trim(title)), duration FROM files WHERE path = ?", (rel,)).fetchone()
+    q = """SELECT lower(trim(f.title)), f.duration, f.title, a.acoustid_id FROM files f
+           LEFT JOIN acoustid_lookups a ON a.fingerprint = f.fingerprint AND a.fp_duration = f.fp_duration
+           WHERE f.path IN ({})"""
+    me = conn.execute(q.format("?"), (rel,)).fetchone()
     if not me or not me[0] or me[1] is None:
         return None
     marks = ",".join("?" * len(imported))
-    for title, dur, orig in conn.execute(f"SELECT lower(trim(title)), duration, title FROM files "
-                                         f"WHERE path IN ({marks})", list(imported)):
-        if title == me[0] and dur is not None and abs(dur - me[1]) <= 3:
+    for title, dur, orig, aid in conn.execute(q.format(marks), list(imported)):
+        same_audio = not (aid and me[3]) or aid == me[3]  # both fingerprinted: must be the same audio
+        if title == me[0] and dur is not None and abs(dur - me[1]) <= 3 and same_audio:
             return orig
     return None
 
