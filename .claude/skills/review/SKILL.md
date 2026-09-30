@@ -60,6 +60,17 @@ approved without asking.
   send it to Unsorted unless the instrumental release is a candidate. Dub/instrumental versions that fingerprint as the originals (e.g. Burning Spear's
   *Living Dub*) are judgment calls: surface them.
 
+## Ingested albums (M5)
+
+Albums from an inbox batch (`/ingest`) share this queue (D31); their `album_key` is an
+absolute path under `inbox/.processed/`. An `ingest duplicate review: <kind> vs <library dir>`
+note puts one under `dupe`:
+- `upgrade`: better audio than the library copy. Approve = import it; afterwards
+  `musiclib ingest upgrades --batch <id>` removes the old copy (D32, ask the user first).
+- `extra_tracks` / `edition`: approve = keep both copies; skip = leave the new one out.
+An `ingest flag: dump_overlap` note means the same album is also in the dump queue: never
+import both; decide them together.
+
 ## Files that don't fit the release
 
 beets imports only files it maps to the release's tracks. `musiclib import` then puts the
