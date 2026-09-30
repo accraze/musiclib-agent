@@ -499,16 +499,24 @@ PLACED_ACTIONS = ("import", "import_asis", "import_extra", "retag_by_fingerprint
 
 
 def current_paths(conn: sqlite3.Connection, sources: list[str] | None = None) -> dict[str, str]:
-    """dump file -> its library path now (latest import/retag row), minus files since removed."""
-    marks = ",".join("?" * len(PLACED_ACTIONS))
-    rows = conn.execute(f"""SELECT source_path, dest_path FROM audit_log
-        WHERE action IN ({marks}) AND dest_path IS NOT NULL ORDER BY id""", PLACED_ACTIONS).fetchall()
+    """dump file -> its library path now (latest import/retag row), minus files since removed.
+    Replayed in log order, so a file placed again after a removal (retag promotion) counts."""
+    return {s: d for s, (d, _) in placements(conn, sources).items()}
+
+
+def placements(conn: sqlite3.Connection, sources: list[str] | None = None) -> dict[str, tuple[str, str]]:
+    """dump file -> (library path now, action that put it there)."""
+    actions = PLACED_ACTIONS + ("remove_from_library",)
+    marks = ",".join("?" * len(actions))
+    rows = conn.execute(f"""SELECT action, source_path, dest_path FROM audit_log
+        WHERE action IN ({marks}) AND dest_path IS NOT NULL ORDER BY id""", actions).fetchall()
     out = {}
-    for src, dest in rows:
-        if sources is None or src in sources:
-            out[src] = dest
-    removed = {r[0] for r in conn.execute("SELECT dest_path FROM audit_log WHERE action = 'remove_from_library'")}
-    return {s: d for s, d in out.items() if d not in removed}
+    for action, src, dest in rows:
+        if action == "remove_from_library":
+            out = {s: v for s, v in out.items() if v[0] != dest}
+        elif sources is None or src in sources:
+            out[src] = (dest, action)
+    return out
 
 
 def remove_from_library(conn: sqlite3.Connection, dest: str, reason: str, decided_by: str) -> dict:

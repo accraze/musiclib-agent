@@ -39,7 +39,7 @@ An agent that manages a personal music library: organize, MusicBrainz-tag and de
 - `uv run musiclib import --remove LIBRARY_FILE --reason "..." [--by agent|user]` — remove one library file (beets DB + disk), logged; refuses paths outside the library.
 - `uv run musiclib import --repair-extras [--apply]` — place unmapped files missing from albums imported before D20.
 - `uv run musiclib import --prune-duplicates [--apply]` — remove library copies of files later found to be duplicates (uses audit_log; library only).
-- `uv run musiclib retag --scan | --album K [--apply]` — relabel an imported album whose tags sit on the wrong audio; acts only on a clean one-to-one pairing where fingerprints and track lengths agree.
+- `uv run musiclib retag --scan | --album K [--apply]` — relabel an imported album whose tags sit on the wrong audio; acts only on a clean one-to-one pairing where fingerprints and track lengths agree. Also promotes an extra that is the real audio of a track (D33); `--promote EXTRA --by user --reason "..."` does so against release lengths, only on the user's decision.
 - `uv run musiclib merge --suggest | --albums A B ... [--apply]` — combine folders of one release (disc 1/disc 2) into one album and re-match it; suggestions exclude copies (shared audio) and oversize groups.
 - `uv run musiclib resync [--apply] [--limit N]` — D25: re-fetch albums with non-Latin artist names so English aliases apply (beets mbsync, library only; moves placed extras along).
 - Config: `musiclib.toml` (`source_dir`, `state_dir`, `library_dir`); secrets such as `acoustid_key` go in gitignored `musiclib.local.toml`, never in the repo or the spec doc. Never run `beet` with the global config (D9).

@@ -103,9 +103,12 @@ def cmd_retag(cfg: config.Config, args) -> None:
         raise SystemExit("--album or --scan required")
     lib = importer.open_library()
     if args.apply:
-        _emit(retag.apply(conn, lib, args.album, args.by, args.reason or "tags were on the wrong audio"))
+        if args.promote and not args.reason:
+            raise SystemExit("--promote needs --reason")
+        _emit(retag.apply(conn, lib, args.album, args.by, args.reason or "tags were on the wrong audio",
+                          source=cfg.source_dir, force=args.promote))
     else:
-        p = retag.plan(conn, lib, args.album)
+        p = retag.plan(conn, lib, args.album, args.promote)
         _emit({k: v for k, v in p.items() if not k.startswith("_")})
 
 
@@ -218,6 +221,9 @@ def main(argv: list[str] | None = None) -> None:
     rt = sub.add_parser("retag", help="relabel an imported album by fingerprint (dry run without --apply)")
     rt.add_argument("--scan", action="store_true", help="list imported albums with swapped-track evidence")
     rt.add_argument("--album", help="album key")
+    rt.add_argument("--promote", action="append", default=[], metavar="EXTRA",
+                    help="D27: put this extra (file name or dump path) on the track it fingerprints as, "
+                         "even when release lengths don't back it; user decision, needs --reason")
     rt.add_argument("--apply", action="store_true")
     rt.add_argument("--by", choices=["agent", "user"], default="user")
     rt.add_argument("--reason")

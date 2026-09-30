@@ -266,3 +266,65 @@ def test_extra_duplicating_an_imported_track_is_skipped_but_bonus_with_copied_ti
     why = importer.extra_skip_reason(conn, cfg.source_dir, "W/07 - greasy legs.mp3", files, placed)
     assert why and why.startswith("duplicate of 'Greasy Legs'")
     assert importer.extra_skip_reason(conn, cfg.source_dir, "W/GH 20 In The First Place.mp3", files, placed) is None
+
+
+def test_retag_promotes_the_extra_that_is_the_track_and_puts_the_stray_back(env, monkeypatch):
+    """Midnight Cleaners: a bonus track tagged with track 2's title wins track 2 and the real
+    track 2 lands beside it as an extra. retag swaps them; the dump stays untouched."""
+    cfg, conn, importer = env
+    from beets.autotag import AlbumInfo, AlbumMatch, TrackInfo
+    from beets.autotag.distance import Distance
+    from beets.autotag.match import Proposal, Recommendation
+    import beets.importer.tasks as tasks
+    from musiclib import acoustid, retag, verify
+
+    tracks = [TrackInfo(title=f"Real Title {i}", track_id=f"rec-{i}", index=i, medium=1,
+                        medium_index=i, medium_total=2, length=2.0) for i in (1, 2)]
+    info = AlbumInfo(tracks=tracks, album="Real Album", album_id="rel-1", artist="Real Band",
+                     artist_id="art-1", year=1999, mediums=1)
+
+    def fake_tag_album(items, search_ids=()):
+        items = sorted(items, key=lambda it: it.path)  # 01 Song 1, 02 Song 2, 03 Song 3 (the stray)
+        m = AlbumMatch(Distance(), info, {items[0]: tracks[0], items[2]: tracks[1]}, [items[1]], [])
+        return "Some Band", "Demo", Proposal([m], Recommendation.medium)
+
+    monkeypatch.setattr(tasks.autotag, "tag_album", fake_tag_album)
+    monkeypatch.setattr("beets.metadata_plugins.album_for_id", lambda _id: info)
+    monkeypatch.setattr(importer, "extra_skip_reason", lambda *a, **k: None)  # fake fingerprints
+    acoustid.migrate(conn)
+    conn.executescript(verify.SCHEMA)
+    for name, title, recs, verdict in [("01 Song 1.mp3", "Song 1", ["rec-1"], "confirmed"),
+                                       ("02 Song 2.mp3", "Song 2", ["rec-2"], "confirmed"),
+                                       ("03 Song 3.wav", "Song 2", [], "unverifiable")]:
+        rel = f"Some Band - Demo/{name}"
+        fid = conn.execute("INSERT INTO files (path, top_dir, ext, size, mtime, duration, title, fingerprint, "
+                           "fp_duration, scanned_at) VALUES (?, 'Some Band - Demo', 'mp3', 1, 0, 2.0, ?, ?, 2, 'now')",
+                           (rel, title, f"fp-{name}")).lastrowid
+        conn.execute("INSERT INTO acoustid_lookups (fingerprint, fp_duration, status, recordings, looked_up_at) "
+                     "VALUES (?, 2, 'ok', ?, 'now')", (f"fp-{name}", json.dumps([{"id": r, "score": 0.9} for r in recs])))
+        conn.execute("INSERT INTO verify (file_id, verdict) VALUES (?, ?)", (fid, verdict))
+    conn.execute("UPDATE matches SET action = 'review', decision = 'approve', decided_album_id = 'rel-1', "
+                 "decided_by = 'agent'")
+    conn.commit()
+    before = _snapshot(cfg.source_dir)
+    importer.run(conn, cfg.source_dir, cfg.state_dir / "staging", "approved", progress=io.StringIO())
+    note = conn.execute("SELECT note FROM imports").fetchone()[0]
+    assert "real audio of a track" in note                     # flagged after import, not applied
+
+    lib = importer.open_library()
+    album_dir = cfg.library_dir / "Real Band" / "1999 - Real Album"
+    assert (album_dir / "02 Song 2.mp3").exists()              # the real track 2, as an extra
+    out = retag.apply(conn, lib, "Some Band - Demo/", "user", "test", source=cfg.source_dir)
+    assert out == {"album_key": "Some Band - Demo/", "retagged": 0, "promoted": 1}
+
+    names = sorted(p.name for p in album_dir.iterdir() if p.suffix in (".mp3", ".flac"))
+    assert names == ["01 Real Title 1.mp3", "02 Real Title 2.mp3", "03 Song 3.flac"]
+    by_track = {i.mb_trackid: os.path.basename(os.fsdecode(i.path)) for i in lib.items()}
+    assert by_track == {"rec-1": "01 Real Title 1.mp3", "rec-2": "02 Real Title 2.mp3"}
+    assert EasyID3(album_dir / "02 Real Title 2.mp3")["title"] == ["Real Title 2"]
+    assert importer.current_paths(conn) == {
+        "Some Band - Demo/01 Song 1.mp3": str(album_dir / "01 Real Title 1.mp3"),
+        "Some Band - Demo/02 Song 2.mp3": str(album_dir / "02 Real Title 2.mp3"),
+        "Some Band - Demo/03 Song 3.wav": str(album_dir / "03 Song 3.flac")}
+    assert _snapshot(cfg.source_dir) == before                 # safety rules 1 and 2
+    assert retag.plan(conn, lib, "Some Band - Demo/")["changes"] == []
