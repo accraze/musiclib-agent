@@ -206,7 +206,7 @@ def main(argv: list[str] | None = None) -> None:
     rl.add_argument("--limit", type=int, default=20)
     rl.add_argument("--offset", type=int, default=0)
     ra = rsub.add_parser("auto", help="standing approvals: D21/D22 (close) or D24 (none); the rest to ask")
-    ra.add_argument("--kind", choices=["close", "none"], default="close")
+    ra.add_argument("--kind", choices=["close", "weak", "none"], default="close")
     ra.add_argument("--limit", type=int, default=20)
     ra.add_argument("--apply", action="store_true", help="record the D21 approvals (otherwise dry run)")
     rd = rsub.add_parser("decide", help="record a user-approved batch of decisions (JSON list)")

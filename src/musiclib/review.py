@@ -46,7 +46,8 @@ D21 = {"max_distance": 0.1, "min_gap": 0.15, "min_confirmed": 0.9, "max_mismatch
        "plausible_runner_up": 0.35}  # a runner-up this close that fits exactly is worth asking about
 D21_PENALTIES = COSMETIC | {"missing_tracks", "unmatched_tracks"}
 # D22: exact tracklist fits where AcoustID simply has no data (obscure releases).
-D22 = {"max_distance": 0.1, "min_gap": 0.3}
+# D26 extends the same rule to distances up to 0.2 (weak matches just over the close line).
+D22 = {"max_distance": 0.2, "min_gap": 0.3}
 VIDEO_EXTS = {"mp4", "m4v", "mkv", "webm", "mov", "avi"}
 
 
@@ -234,12 +235,13 @@ def _d22(album: dict, files_meta: list[tuple]) -> tuple[bool, str]:
     ]
     if not all(checks):
         return False, "not D22"
-    return True, (f"D22: exact {n}-track fit, d={best['distance']:.3f}, gap {gap:.2f}, 0 mismatch, "
+    rule = "D22" if best["distance"] < 0.1 else "D26"
+    return True, (f"{rule}: exact {n}-track fit, d={best['distance']:.3f}, gap {gap:.2f}, 0 mismatch, "
                   f"{verify.get('confirmed', 0)}/{n} confirmed (AcoustID lacks data)")
 
 
 def _d21(album: dict, files_meta: list[tuple]) -> tuple[bool, str]:
-    cands, verify, n = album["candidates"], album["local"]["verify"], album["files"]
+    cands, verify, n = album["candidates"], album["local"]["verify"], max(1, album["files"])
     if not cands:
         return False, "no candidates"
     best = cands[0]
@@ -294,8 +296,8 @@ def auto_approve(conn: sqlite3.Connection, *, kind: str = "close", limit: int = 
                  apply: bool = False) -> dict:
     """Split the next `limit` albums of `kind` into standing-approval decisions (D21/D22 for
     close calls, D24 for unmatched) and albums to ask about."""
-    if kind not in ("close", "none"):
-        raise SystemExit("auto works on --kind close or none")
+    if kind not in ("close", "weak", "none"):
+        raise SystemExit("auto works on --kind close, weak or none")
     batch = listing(conn, kind, limit)
     auto, ask = [], []
     for a in batch["albums"]:
@@ -303,11 +305,11 @@ def auto_approve(conn: sqlite3.Connection, *, kind: str = "close", limit: int = 
                                         (a["album_key"],)).fetchone()[0])
         marks = ",".join("?" * len(files))
         meta = [tuple(m) for m in conn.execute(f"SELECT ext, error FROM files WHERE path IN ({marks})", files)]
-        ok, why = (d21_check if kind == "close" else d24_check)(a, meta)
+        ok, why = (d24_check if kind == "none" else d21_check)(a, meta)
         (auto if ok else ask).append({**a, "d21": why})
     recorded = None
     if apply and auto:
-        decision = "approve" if kind == "close" else "asis"
+        decision = "asis" if kind == "none" else "approve"
         recorded = decide(conn, [{"album_key": a["album_key"], "decision": decision, "reason": a["d21"]}
                                  for a in auto], "agent")
     return {"auto": auto, "ask": ask, "recorded": recorded, "remaining": batch["remaining"]}

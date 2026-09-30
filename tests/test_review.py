@@ -175,3 +175,21 @@ def test_imported_best_candidate_without_shared_audio_is_not_a_duplicate(conn):
     conn.commit()
     [a] = [a for a in review.listing(conn, "none")["albums"] if a["album_key"] == "Vol5/"]
     assert a["already_in_library"] == []
+
+
+@pytest.mark.parametrize("dist,ok,rule", [(0.15, True, "D26"), (0.25, False, None), (0.05, True, "D22")])
+def test_d26_extends_exact_fit_rule_to_weak_matches(dist, ok, rule):
+    album = _album([cand("r1", dist, ["tracks"]), cand("r2", dist + 0.5)], confirmed=0)
+    got, why = review.d21_check(album, [])
+    assert got is ok
+    if ok:
+        assert why.startswith(rule)
+
+
+def test_auto_on_weak_uses_the_close_call_rules(conn):
+    conn.execute("INSERT INTO matches (album_key, dirs, files, action, recommendation, distance, album_id, "
+                 "candidates, matched_at) VALUES ('Weak/', '[]', '[]', 'review', 'medium', 0.15, 'rw', ?, 'now')",
+                 (json.dumps([cand("rw", 0.15, ["tracks"]), cand("r2", 0.7)]),))
+    conn.commit()
+    out = review.auto_approve(conn, kind="weak", limit=10)
+    assert [a["album_key"] for a in out["auto"]] == ["Weak/"] and out["auto"][0]["d21"].startswith("D26")
