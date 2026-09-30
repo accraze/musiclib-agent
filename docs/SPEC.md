@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-09-29 (doc rev 65)
+Last synced: 2026-09-29 (doc rev 66)
 -->
 
 # Music Library Agent — Spec
@@ -222,6 +222,8 @@ The library holds 3,314 albums (37,859 audio files, 382 GB) at /srv/data/media/m
 - **D23 on import (batch 10):** fixed Dr. Dre *The Chronic* (11 files), Jedi Mind Tricks *Visions of Gandhi* (4) and DJ Koze *Knock Knock* (2). Six flagged albums are left as they are: AcoustID is wrong where lengths disagree (*Serious Times*, Singers & Players), tracks come from other releases (*Till I Die*, *Truth and Wizdom*), or there are alternate takes with the same title (Savoy/Dial, Grandmothers).
 - **Split releases merged (2026-09-29):** 22 releases spread over several folders (disc 1/disc 2, reels, parts) were merged into one album each and re-matched. 13 became strong matches and were imported (e.g. Basinski *The Disintegration Loops*, Lee Perry *Arkology*); 9 are back in the review queue. Two more duplicate copies were caught by the new already-in-library check (Pink Fairies, A.R. & Machines). Library: 3,671 albums, 41,745 files, 419 GB. Open: 126 close, 479 weak, 364 unmatched, 89 in duplicate review, 4 errors.
 - **Box sets (2026-09-29):** the Merzbox (41 disc folders, 185 tracks) and *Works of Igor Stravinsky* (13 volume folders, 353 tracks) were merged and imported as single box-set albums; discs already imported as standalone releases stay separate. D24 sent 135 unmatched albums to Unsorted/.
+- **Weak matches started (2026-09-29):** 20 approved by hand, 29 more under D26. Library: 3,926 albums, 47,397 files, 474 GB. Open: 122 close, 427 weak, 111 unmatched, 89 in duplicate review, 4 errors.
+- **Needs a hand fix (swapped tracks without a clean pairing):** Potshot *Till I Die*, Augustus Pablo *Earth's Rightful Ruler*, *Silver Monk Time* disk 1. Their import notes point to `musiclib retag --album`.
 
 ## Open questions
 
@@ -242,6 +244,7 @@ Every design decision is recorded here, newest first. To reverse one, mark it Su
 
 | # | Date | Decision | Rationale | Status |
 | --- | --- | --- | --- | --- |
+| D26 | 2026-09-29 | Extends D22 to distances below 0.2: weak matches with an exact tracklist fit, a gap of at least 0.3, zero fingerprint mismatches, cosmetic penalties and no video or scan-error files are approved without asking. | The closest weak matches (0.10-0.11) were close calls in all but name; 10 of the first 20 fit these criteria and were approved. Applied to 29 of 456 weak matches on 2026-09-29. | Accepted |
 | D25 | 2026-09-29 | Prefer English artist names: beets import.languages [en] uses MusicBrainz's English alias where one exists (tags and folders). Already-imported albums with non-Latin artist names were re-synced (musiclib resync); artists without an English alias keep their native name. | Folders like Игорь Фёдорович Стравинский/ and 久石譲/ were hard to browse. 45 of 86 affected albums switched (Igor Stravinsky, Joe Hisaishi, Ichiko Aoba, Fushitsusha); 24 have no English alias on MusicBrainz (e.g. Carmen Maki & OZ). | Accepted |
 | D24 | 2026-09-29 | Unmatched albums (best candidate at distance 0.5 or worse) go to Unsorted/ as-is without asking when no candidate's album title matches the folder's album tag (exact or near-exact, or whole-word containment of 8+ characters), the album isn't flagged as a possible duplicate, and it has no video files. | In three batches, every partial-album approval had a title-matching candidate and no Unsorted decision did. Covers 43% of unmatched albums (135 on 2026-09-29); box-set discs, duplicates and title matches are still asked. | Accepted |
 | D23 | 2026-09-28 | After every import, albums whose files fingerprint as other tracks of the same album are relabeled by fingerprint automatically, but only when the pairing is one-to-one and every move is supported by track length (equal-length tracks count as no evidence). Otherwise the album is flagged for musiclib retag --album. All changes are logged. | beets pairs files with release tracks by title tag, so scrambled albums import with titles on the wrong songs (Dr. Dre The Chronic: 10 of 11). 10 imported albums (31 files) were fixed this way; where lengths contradicted AcoustID (Serious Times, Singers & Players) the tags were right and nothing changed. | Accepted |
