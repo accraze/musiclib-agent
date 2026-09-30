@@ -149,6 +149,17 @@ def cmd_ingest(cfg: config.Config, args) -> None:
         _emit(ingest.scan(conn, cfg, args.batch, workers=args.workers))
     elif args.ingest_cmd == "dedupe":
         _emit(ingest.dedupe(conn, args.batch))
+    elif args.ingest_cmd == "report":
+        _emit(ingest.manifest(conn, cfg, args.batch))
+    else:  # match / import / upgrades use beets
+        from . import beetsenv
+        beetsenv.setup(cfg)  # before anything imports beets (D9)
+        if args.ingest_cmd == "match":
+            _emit(ingest.match(conn, args.batch, rematch=args.rematch))
+        elif args.ingest_cmd == "import":
+            _emit(ingest.import_batch(conn, cfg, args.batch, apply=args.apply))
+        elif args.ingest_cmd == "upgrades":
+            _emit(ingest.upgrades(conn, cfg, args.batch, apply=args.apply, decided_by=args.by))
 
 
 def cmd_report(cfg: config.Config, args) -> None:
@@ -265,6 +276,18 @@ def main(argv: list[str] | None = None) -> None:
     isc.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2))
     idd = isub.add_parser("dedupe", help="D30: duplicates within the batch and against the library (proposals)")
     idd.add_argument("--batch", required=True, help="batch id or folder name")
+    im = isub.add_parser("match", help="dry run: MusicBrainz match per batch album into the shared queue (D31)")
+    im.add_argument("--batch", required=True)
+    im.add_argument("--rematch", action="store_true")
+    ii = isub.add_parser("import", help="import strong matches and no-candidate albums (dry run without --apply)")
+    ii.add_argument("--batch", required=True)
+    ii.add_argument("--apply", action="store_true")
+    iu = isub.add_parser("upgrades", help="D32: remove old library copies of approved, imported upgrades")
+    iu.add_argument("--batch", required=True)
+    iu.add_argument("--apply", action="store_true")
+    iu.add_argument("--by", choices=["agent", "user"], default="user")
+    ir = isub.add_parser("report", help="batch manifest: every file and where it went (state/reports/)")
+    ir.add_argument("--batch", required=True)
     ing.set_defaults(func=cmd_ingest)
 
     rep = sub.add_parser("report", help="summarize the inventory as JSON")

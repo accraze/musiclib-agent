@@ -51,8 +51,9 @@ def migrate(conn: sqlite3.Connection) -> None:
     acoustid_migrate(conn)
     conn.executescript(MATCH_SCHEMA + SCHEMA)
     cols = {r[1] for r in conn.execute("PRAGMA table_info(matches)")}
-    # Reviewer decisions (M4) live on the match row.
-    for col, typ in (("decision", "TEXT"), ("decided_album_id", "TEXT"), ("decided_by", "TEXT")):
+    # Reviewer decisions (M4) live on the match row; batch_id marks ingested albums (D31).
+    for col, typ in (("decision", "TEXT"), ("decided_album_id", "TEXT"), ("decided_by", "TEXT"),
+                     ("batch_id", "INTEGER")):
         if col not in cols:
             conn.execute(f"ALTER TABLE matches ADD COLUMN {col} {typ}")
 

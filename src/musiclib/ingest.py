@@ -308,3 +308,206 @@ def dupes_summary(conn: sqlite3.Connection, bid: int) -> dict:
     for r in rows:
         counts[f"{r['outcome']}:{r['kind']}"] = counts.get(f"{r['outcome']}:{r['kind']}", 0) + 1
     return {"batch": bid, "counts": counts, "items": rows}
+
+
+# --- Match and import (D16 two steps, D31 shared review queue) ----------------------------
+
+def _skipped(conn: sqlite3.Connection, bid: int) -> tuple[set[str], list[str]]:
+    """Batch files and folders that dedupe says not to import."""
+    files, folders = set(), []
+    for r in conn.execute("SELECT path, scope FROM ingest_dupes WHERE batch_id = ? AND outcome = 'skip'", (bid,)):
+        (folders.append if r["scope"] == "folder" else files.add)(r["path"])
+    return files, folders
+
+
+def albums(conn: sqlite3.Connection, root: str, bid: int):
+    """(album_key, dirs, files) for the batch, as beets groups them (multi-disc folders
+    become one album), minus dedupe skips. Keys and paths are absolute (D29)."""
+    from beets.importer.tasks import albums_in_dir
+
+    audio = {r[0] for r in conn.execute("SELECT path FROM files WHERE top_dir = ?", (root,))}
+    skip_files, skip_folders = _skipped(conn, bid)
+    for dirs, paths in albums_in_dir(os.fsencode(root)):
+        files = sorted(f for f in map(os.fsdecode, paths) if f in audio and f not in skip_files
+                       and not any(f.startswith(d) for d in skip_folders))
+        if files:
+            ds = [os.fsdecode(d).rstrip("/") + "/" for d in dirs]
+            yield ds[0], ds, files
+
+
+def _dupe_notes(conn: sqlite3.Connection, bid: int, dirs: list[str]) -> tuple[str | None, str | None]:
+    """(review note, flag note) from ingest_dupes rows on these folders."""
+    review, flags = [], []
+    for r in conn.execute("SELECT * FROM ingest_dupes WHERE batch_id = ? AND outcome != 'skip'", (bid,)):
+        if any(r["path"].startswith(d) for d in dirs):
+            (review if r["outcome"] == "review" else flags).append(f"{r['kind']} vs {r['other']}")
+    # "duplicate review" puts the album in the review queue's `dupe` kind (review.IN_DUPE).
+    return (("ingest duplicate review: " + "; ".join(review)) if review else None,
+            ("ingest flag: " + "; ".join(flags)) if flags else None)
+
+
+def match(conn: sqlite3.Connection, ref: str | int, *, rematch: bool = False,
+          matcher=None, progress=sys.stderr) -> dict:
+    """Dry-run match each batch album on MusicBrainz (~5 s/album). Read-only on files.
+    Rows go to `matches` with batch_id, so /review sees them (D31)."""
+    from .importer import migrate as importer_migrate
+    from .match import COLUMNS, match_album
+
+    matcher = matcher or match_album
+    importer_migrate(conn)
+    b = batch(conn, ref)
+    if b["status"] in ("claimed", "scanned"):
+        raise SystemExit(f"batch {b['id']} is not deduped yet: run ingest dedupe first")
+    root = b["path"]
+    done = set() if rematch else {r[0] for r in conn.execute(
+        "SELECT album_key FROM matches WHERE batch_id = ?", (b["id"],))}
+    todo = [a for a in albums(conn, root, b["id"]) if a[0] not in done]
+    print(f"ingest match: {len(todo)} albums in batch {b['id']}", file=progress, flush=True)
+    counts: dict[str, int] = {}
+    cols = COLUMNS + ["batch_id"]
+    for key, dirs, files in todo:
+        row = {"album_key": key, "dirs": json.dumps(dirs), "files": json.dumps(files),
+               "search_id": None, "matched_at": now(), "batch_id": b["id"]}
+        try:
+            row.update(matcher(Path(root), files, None))
+        except Exception as e:  # unreadable file, network trouble: record and move on
+            row.update(action="error", note=f"{type(e).__name__}: {e}"[:300])
+        review, flag = _dupe_notes(conn, b["id"], dirs)
+        if review and row["action"] in ("auto", "unsorted"):
+            row["action"] = "review"
+        row["note"] = "; ".join(n for n in (row.get("note"), review, flag) if n) or None
+        conn.execute(f"INSERT OR REPLACE INTO matches ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+                     [row.get(c) for c in cols])
+        conn.commit()
+        counts[row["action"]] = counts.get(row["action"], 0) + 1
+        print(f"  {row['action']}: {key}", file=progress, flush=True)
+    _set_status(conn, b["id"], "matched")
+    return {"batch": b["id"], "matched": len(todo), **counts}
+
+
+def _keys(conn: sqlite3.Connection, bid: int) -> list[str]:
+    return [r[0] for r in conn.execute("SELECT album_key FROM matches WHERE batch_id = ?", (bid,))]
+
+
+def _waiting(conn: sqlite3.Connection, bid: int) -> list[dict]:
+    return [dict(r) for r in conn.execute("""
+        SELECT m.album_key, m.action, m.distance, m.note FROM matches m
+        LEFT JOIN imports i ON i.match_id = m.id AND i.status = 'imported'
+        WHERE m.batch_id = ? AND i.match_id IS NULL AND m.decision IS NULL
+          AND m.action IN ('review', 'error') ORDER BY m.album_key""", (bid,))]
+
+
+def import_batch(conn: sqlite3.Connection, cfg: Config, ref: str | int, *, apply: bool = False,
+                 progress=sys.stderr) -> dict:
+    """Import the batch albums that need no review: strong matches (D15) and albums with no
+    candidate at all (D13, Unsorted/). Reviewed albums come in through /review as usual.
+    Callers must have run beetsenv.setup()."""
+    from . import importer
+
+    importer.migrate(conn)
+    b = batch(conn, ref)
+    if b["status"] in ("claimed", "scanned", "deduped"):
+        raise SystemExit(f"batch {b['id']} is not matched yet: run ingest match first")
+    keys, root = _keys(conn, b["id"]), Path(b["path"])
+    if not apply:
+        return {"batch": b["id"], "dry_run": True,
+                **{w: importer.plan(conn, root, w, only=keys) for w in ("auto", "unsorted")},
+                "waiting_for_review": _waiting(conn, b["id"])}
+    results = {}
+    with importer.library_lock(cfg.state_dir):
+        for which in ("auto", "unsorted"):
+            if importer.select(conn, which, albums=keys):
+                results[which] = importer.run(conn, root, cfg.state_dir / "staging", which,
+                                              only=keys, progress=progress)
+    waiting = _waiting(conn, b["id"])
+    _set_status(conn, b["id"], "imported", f"{len(waiting)} album(s) waiting for review" if waiting else None)
+    return {"batch": b["id"], **results, "waiting_for_review": waiting}
+
+
+def upgrades(conn: sqlite3.Connection, cfg: Config, ref: str | int, *, apply: bool = False,
+             decided_by: str = "user") -> dict:
+    """D32: once an approved upgrade is imported, take the old library copy out (logged).
+    Only files placed from other originals are removed, never this batch's own."""
+    from . import importer
+
+    importer.migrate(conn)
+    b = batch(conn, ref)
+    root = b["path"].rstrip("/") + "/"
+    placed = importer.current_paths(conn)
+    todo = []
+    for u in conn.execute("SELECT path, other FROM ingest_dupes WHERE batch_id = ? AND kind = 'upgrade'",
+                          (b["id"],)):
+        m = conn.execute("""
+            SELECT m.album_key, m.decision, i.status, i.library_dir FROM matches m
+            LEFT JOIN imports i ON i.match_id = m.id
+            WHERE m.batch_id = ? AND EXISTS (SELECT 1 FROM json_each(m.dirs) d
+                                             WHERE substr(?, 1, length(d.value)) = d.value)""",
+                         (b["id"], u["path"])).fetchone()
+        if m is None or m["status"] != "imported" or m["decision"] != "approve":
+            continue  # not approved and imported (yet): the old copy stays
+        old = sorted(d for s, d in placed.items() if d.startswith(u["other"]) and not s.startswith(root))
+        if old:
+            todo.append({"album": m["album_key"], "new_dir": m["library_dir"], "old_dir": u["other"],
+                         "remove": old})
+    if not apply:
+        return {"batch": b["id"], "dry_run": True, "upgrades": todo}
+    removed = 0
+    with importer.library_lock(cfg.state_dir):
+        for t in todo:
+            for dest in t["remove"]:
+                importer.remove_from_library(
+                    conn, dest, f"D32: replaced by the better copy from {t['album']} (now in {t['new_dir']})",
+                    decided_by)
+                removed += 1
+    return {"batch": b["id"], "upgrades": len(todo), "removed": removed}
+
+
+# --- Manifest (D18 for a batch) -----------------------------------------------------------
+
+def manifest(conn: sqlite3.Connection, cfg: Config, ref: str | int) -> dict:
+    """Every batch file with where it went or why not; written to state/reports/."""
+    from .importer import migrate as importer_migrate
+
+    importer_migrate(conn)
+    conn.executescript(DUPES_SCHEMA)
+    b = batch(conn, ref)
+    root = b["path"]
+    files = [r[0] for r in conn.execute("SELECT path FROM files WHERE top_dir = ? ORDER BY path", (root,))]
+    status: dict[str, tuple[str, str | None]] = {}
+    for r in conn.execute("SELECT id, files, action, note, decision FROM matches WHERE batch_id = ?", (b["id"],)):
+        imported = conn.execute("SELECT 1 FROM imports WHERE match_id = ? AND status = 'imported'",
+                                (r["id"],)).fetchone()
+        if imported:
+            kind = "imported"
+        elif r["decision"]:
+            kind = f"decided:{r['decision']}"  # approved/asis, not imported yet; or skip
+        else:
+            kind = {"auto": "pending", "unsorted": "pending"}.get(r["action"], r["action"])
+        for f in json.loads(r["files"]):
+            status[f] = (kind, r["note"])
+    for r in conn.execute("SELECT path, scope, other, reason FROM ingest_dupes "
+                          "WHERE batch_id = ? AND outcome = 'skip'", (b["id"],)):
+        hit = [r["path"]] if r["scope"] == "file" else [f for f in files if f.startswith(r["path"])]
+        for f in hit:
+            status[f] = ("duplicate", f"{r['reason']}; kept {r['other']}")
+    for r in conn.execute("SELECT action, source_path, dest_path, reason FROM audit_log WHERE source_path IN "
+                          "(SELECT value FROM json_each(?)) ORDER BY id", (json.dumps(files),)):
+        if r["action"].startswith("import") or r["action"] == "retag_by_fingerprint":
+            status[r["source_path"]] = ("imported", r["dest_path"])
+        elif r["action"] == "skip_extra":
+            status[r["source_path"]] = ("skipped", r["reason"])
+        elif r["action"] == "remove_from_library":
+            status[r["source_path"]] = ("removed", r["reason"])
+    rows = [{"path": f, "status": status.get(f, ("unmatched", None))[0],
+             "detail": status.get(f, ("unmatched", None))[1]} for f in files]
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+    cfg.reports_dir.mkdir(parents=True, exist_ok=True)
+    out = cfg.reports_dir / f"ingest-{b['id']}-{date.today().isoformat()}.json"
+    out.write_text(json.dumps(rows, indent=1, ensure_ascii=False))
+    return {"batch": b["id"], "folder": b["folder"], "path": root, "status": b["status"],
+            "files": len(rows), "by_status": dict(sorted(counts.items())),
+            "flags": [dict(r) for r in conn.execute(
+                "SELECT path, other, reason FROM ingest_dupes WHERE batch_id = ? AND outcome = 'flag'", (b["id"],))],
+            "written": str(out)}
