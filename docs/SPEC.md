@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-09-29 (doc rev 71)
+Last synced: 2026-09-30 (doc rev 72)
 -->
 
 # Music Library Agent — Spec
@@ -244,6 +244,7 @@ Every design decision is recorded here, newest first. To reverse one, mark it Su
 
 | # | Date | Decision | Rationale | Status |
 | --- | --- | --- | --- | --- |
+| D33 | 2026-09-30 | musiclib retag can promote an extra (D20) onto a release track that beets gave to another file. The extra must fingerprint as exactly that track. Without the user's say it also needs track length to back the swap; with retag --promote (--by user, reason required) the user may overrule release lengths. The displaced file goes back into the album folder from the dump, tags untouched. Never applied automatically after import: flagged for retag --album. All steps are logged. | A bonus track tagged with an album track's title can win beets' pairing: Midnight Cleaners (a 210 s stray on Only a Shadow) and Cellophane Symphony (the 263 s single edit on Sweet Cherry Wine). MusicBrainz lengths there fit neither dump version (212 s, 237 s), so a length rule alone never fixes them; file names settle it, and that is the user's judgment. Of 22 imported albums with a title-sharing extra, the automatic rules change none. | Accepted |
 | D32 | 2026-09-29 | Approved upgrades (a better inbox copy of a library album, D30) import the new copy first, then remove the old library copy with musiclib import --remove, logged with a reason that names the replacement. | The library never loses an album mid-swap and the removal is traceable. The old copy's original stays in the dump or inbox archive, so it can be recovered. | Accepted |
 | D31 | 2026-09-29 | Ingested albums that need review join the shared review queue (matches rows tagged with their ingest batch) and are handled by /review. Standing approvals D21, D22, D24 and D26 apply to them. | One queue and one set of criteria: ingestion is the same pipeline on a smaller input. | Accepted |
 | D30 | 2026-09-29 | Ingest dedupes against the library by the original files' SHA-256 and AcoustID identity (D14, 90%). A copy that ranks equal or worse (D6) is not imported and the ingest manifest names the library copy; a better copy, a copy with tracks the library lacks, or another edition goes to review. Library files are never replaced automatically. Overlap with dump albums not yet imported is only flagged in the ingest report. | Library copies carry tags written by beets, so their own hashes never match; the originals' hashes and fingerprints do, and the audit log links each library file to its original. | Accepted |
