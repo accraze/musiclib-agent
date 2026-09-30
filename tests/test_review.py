@@ -193,3 +193,12 @@ def test_auto_on_weak_uses_the_close_call_rules(conn):
     conn.commit()
     out = review.auto_approve(conn, kind="weak", limit=10)
     assert [a["album_key"] for a in out["auto"]] == ["Weak/"] and out["auto"][0]["d21"].startswith("D26")
+
+
+@pytest.mark.parametrize("local,key,cand_album,flag", [
+    ("Ironman", "(1996) Ironman Instrumentals/", "Ironman", "instrumental"),
+    ("Liquid Swords (instrumental)", "x/", "Liquid Swords (instrumental)", None),
+    ("Figure 8", "x/", "Figure 8", None),
+])
+def test_version_mismatch(local, key, cand_album, flag):
+    assert review.version_mismatch(local, key, cand_album) == flag

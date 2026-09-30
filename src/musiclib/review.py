@@ -207,9 +207,26 @@ def decide(conn: sqlite3.Connection, decisions: list[dict], decided_by: str) -> 
     return {"recorded": len(rows), **Counter(r[2] for r in rows)}
 
 
+VERSION_WORDS = ("instrumental", "acapella", "a cappella", "dub version", "remix")
+
+
+def version_mismatch(local_album: str | None, album_key: str, cand_album: str) -> str | None:
+    """'Instrumentals' folder matched to the vocal album (or the reverse): the recordings differ."""
+    here = f"{local_album or ''} {album_key}".lower()
+    there = (cand_album or "").lower()
+    for w in VERSION_WORDS:
+        if (w in here) != (w in there):
+            return w
+    return None
+
+
 def d21_check(album: dict, files_meta: list[tuple]) -> tuple[bool, str]:
     """(qualifies, why) under D21, or else D22. `album` is a listing entry;
     files_meta = [(ext, error), ...]."""
+    if album["candidates"]:
+        w = version_mismatch(album["local"].get("album"), album.get("album_key", ""), album["candidates"][0]["album"])
+        if w:
+            return False, f"'{w}' in one title but not the other: likely a different version"
     if album.get("already_in_library"):
         return False, f"release already in the library (from {album['already_in_library'][0]})"
     ok, why = _d21(album, files_meta)

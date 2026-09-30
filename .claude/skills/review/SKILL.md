@@ -56,7 +56,8 @@ approved without asking.
 - **Skip** unreadable folders (`error`) and anything the user wants to handle by hand.
 - **Ask** rather than guess when two releases fit equally, or the files look like a mix
   of albums (several release IDs in one folder, or `verify` full of `mismatch`).
-  Dub/instrumental versions that fingerprint as the originals (e.g. Burning Spear's
+  An "Instrumentals" folder matched to the vocal album (or the reverse) is a different version:
+  send it to Unsorted unless the instrumental release is a candidate. Dub/instrumental versions that fingerprint as the originals (e.g. Burning Spear's
   *Living Dub*) are judgment calls: surface them.
 
 ## Files that don't fit the release
