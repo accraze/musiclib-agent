@@ -207,7 +207,7 @@ def decide(conn: sqlite3.Connection, decisions: list[dict], decided_by: str) -> 
     return {"recorded": len(rows), **Counter(r[2] for r in rows)}
 
 
-VERSION_WORDS = ("instrumental", "acapella", "a cappella", "dub version", "remix")
+VERSION_WORDS = ("instrumental", "acapella", "a cappella")  # "remix" is too noisy (catalog names)
 
 
 def version_mismatch(local_album: str | None, album_key: str, cand_album: str) -> str | None:
