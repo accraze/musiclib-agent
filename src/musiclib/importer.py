@@ -260,11 +260,14 @@ def _duplicate_of(conn: sqlite3.Connection, rel: str, imported: list[str]) -> st
         return None
     marks = ",".join("?" * len(imported))
     for title, dur, orig, fp in conn.execute(q.format(marks), list(imported)):
-        if title != me[0] or dur is None or abs(dur - me[1]) > 3:
+        if title != me[0] or dur is None:
             continue
-        if fp and me[3] and similarity(fp, me[3]) < COPY_SIMILARITY:
-            continue
-        return orig
+        if fp and me[3]:
+            # Fingerprints decide; allow a looser length window for different fades/masterings.
+            if abs(dur - me[1]) <= 10 and similarity(fp, me[3]) >= COPY_SIMILARITY:
+                return orig
+        elif abs(dur - me[1]) <= 3:
+            return orig
     return None
 
 
