@@ -108,15 +108,24 @@ class Folder:
                 "release": self.release}
 
 
+# The per-file columns duplicate grouping needs; {where} narrows the files.
+FILE_ROWS = """
+    SELECT f.id, f.path, f.size, f.sha256, f.lossless, COALESCE(f.bitrate, 0) AS bitrate,
+           f.has_art, NULLIF(f.mb_albumid, '') AS album, a.acoustid_id, v.verdict,
+           lower(trim(f.title)) AS title, f.duration
+    FROM files f
+    LEFT JOIN acoustid_lookups a ON a.fingerprint = f.fingerprint AND a.fp_duration = f.fp_duration
+    LEFT JOIN verify v ON v.file_id = f.id
+    WHERE {where}
+"""
+
+
 def _load(conn: sqlite3.Connection):
-    rows = conn.execute("""
-        SELECT f.id, f.path, f.size, f.sha256, f.lossless, COALESCE(f.bitrate, 0) AS bitrate,
-               f.has_art, NULLIF(f.mb_albumid, '') AS album, a.acoustid_id, v.verdict,
-               lower(trim(f.title)) AS title, f.duration
-        FROM files f
-        LEFT JOIN acoustid_lookups a ON a.fingerprint = f.fingerprint AND a.fp_duration = f.fp_duration
-        LEFT JOIN verify v ON v.file_id = f.id
-    """).fetchall()
+    return folders_of(conn.execute(FILE_ROWS.format(where="substr(f.path, 1, 1) != '/'")).fetchall())
+
+
+def folders_of(rows) -> tuple[list, dict[str, Folder]]:
+    """Group file rows (columns as in _load) into Folders."""
     folders: dict[str, Folder] = {}
     for r in rows:
         d = folders.setdefault(_folder(r["path"]), Folder(_folder(r["path"])))
@@ -152,8 +161,24 @@ class _UnionFind:
 
 
 def find(conn: sqlite3.Connection) -> dict:
+    """Rebuild the dump's duplicate groups (dupe_groups/dupe_members) from scratch."""
     rows, folders = _load(conn)
+    groups = group(rows, folders)
     conn.executescript(SCHEMA)
+    for tier, scope, action, reason, keeper, carry, reclaim, mem in groups:
+        gid = conn.execute(
+            "INSERT INTO dupe_groups (tier, scope, action, reason, keeper, carry_tags_from, reclaimable) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)", (tier, scope, action, reason, keeper, carry, reclaim)).lastrowid
+        conn.executemany("INSERT INTO dupe_members VALUES (?, ?, ?, ?, ?)",
+                         [(gid, p, role, cov, json.dumps(st) if st else None) for p, role, cov, st in mem])
+    conn.commit()
+    return summary(conn)
+
+
+def group(rows, folders: dict[str, Folder]) -> list[tuple]:
+    """Duplicate groups over the given files; no DB access.
+    Each: (tier, scope, action, reason, keeper, carry_tags_from, reclaimable, members),
+    members = [(path, 'keep' | 'drop', coverage, stats or None)]."""
     groups = []  # (tier, scope, action, reason, keeper, carry, reclaimable, members)
 
     # Tier 2/3: folder pairs with high overlap, via an inverted index on track keys.
@@ -258,15 +283,7 @@ def find(conn: sqlite3.Connection) -> dict:
             action, reason = "auto", "second copy in the same folder"
         groups.append((2, "file", action, reason, keeper["path"], None,
                        sum(r["size"] for r in losers), mem))
-
-    for tier, scope, action, reason, keeper, carry, reclaim, mem in groups:
-        gid = conn.execute(
-            "INSERT INTO dupe_groups (tier, scope, action, reason, keeper, carry_tags_from, reclaimable) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)", (tier, scope, action, reason, keeper, carry, reclaim)).lastrowid
-        conn.executemany("INSERT INTO dupe_members VALUES (?, ?, ?, ?, ?)",
-                         [(gid, p, role, cov, json.dumps(st) if st else None) for p, role, cov, st in mem])
-    conn.commit()
-    return summary(conn)
+    return groups
 
 
 def summary(conn: sqlite3.Connection, top: int = 5) -> dict:

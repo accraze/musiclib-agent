@@ -66,15 +66,31 @@ def classify(tag: str | None, status: str | None, recordings_json: str | None,
 
 
 def run(conn: sqlite3.Connection, top: int = 10) -> dict:
+    classify_files(conn)
+    return summary(conn, top)
+
+
+def run_under(conn: sqlite3.Connection, root: str) -> dict:
+    """Classify only the files below `root` (an inbox batch); other verdicts are untouched."""
+    where, args = "substr(f.path, 1, length(?)) = ?", (root.rstrip("/") + "/",) * 2
+    classify_files(conn, where, args)
+    return {r[0]: r[1] for r in conn.execute(f"""
+        SELECT v.verdict, COUNT(*) FROM verify v JOIN files f ON f.id = v.file_id
+        WHERE {where} GROUP BY v.verdict ORDER BY 2 DESC""", args)}
+
+
+def classify_files(conn: sqlite3.Connection, where: str = "1", args: tuple = ()) -> None:
+    """(Re)compute verdicts for the files matching `where` (SQL over files f)."""
     migrate(conn)
     conn.executescript(SCHEMA)
-    conn.execute("DELETE FROM verify")
-    rows = conn.execute("""
+    conn.execute(f"DELETE FROM verify WHERE file_id IN (SELECT f.id FROM files f WHERE {where})", args)
+    rows = conn.execute(f"""
         SELECT f.id, NULLIF(f.mb_trackid, '') AS tag, f.title, a.status, a.recordings, a.titles
         FROM files f
         LEFT JOIN acoustid_lookups a
           ON a.fingerprint = f.fingerprint AND a.fp_duration = f.fp_duration
-    """).fetchall()
+        WHERE {where}
+    """, args).fetchall()
     out = []
     for r in rows:
         verdict, recs = classify(r["tag"], r["status"], r["recordings"], r["title"], r["titles"])
@@ -83,7 +99,6 @@ def run(conn: sqlite3.Connection, top: int = 10) -> dict:
                     json.dumps([x["id"] for x in recs])))
     conn.executemany("INSERT INTO verify VALUES (?, ?, ?, ?, ?, ?)", out)
     conn.commit()
-    return summary(conn, top)
 
 
 def summary(conn: sqlite3.Connection, top: int = 10) -> dict:

@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS runs (
     status      TEXT
 );
 
--- One row per audio file in the source dump. Paths are relative to source_dir.
+-- One row per audio file. Paths are relative to source_dir for the dump, absolute for
+-- files outside it (inbox batches, D29): `source / path` resolves both.
 CREATE TABLE IF NOT EXISTS files (
     id            INTEGER PRIMARY KEY,
     path          TEXT NOT NULL UNIQUE,
@@ -87,5 +88,16 @@ def connect(db_path: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
-    conn.executescript(SCHEMA)
+    conn.executescript(SCHEMA + TEMP_VIEWS)
     return conn
+
+
+# Per-connection views (temp schema: nothing is written to the DB file).
+# dump_files: the source dump only, i.e. relative paths (D29).
+TEMP_VIEWS = """
+CREATE TEMP VIEW IF NOT EXISTS dump_files AS SELECT * FROM files WHERE substr(path, 1, 1) != '/';
+"""
+
+
+def is_dump_path(path: str) -> bool:
+    return not path.startswith("/")

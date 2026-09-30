@@ -312,11 +312,28 @@ def place_extras(album_dir: Path, files: list[tuple[Path, str]], *, move: bool) 
     return placed
 
 
+def unsorted_name(rel: str) -> Path:
+    """Where a file goes under Unsorted/ (D13): its dump path, or for an inbox file (absolute,
+    D29) its path below inbox/.processed/<date>/, i.e. starting at the dropped folder."""
+    p = Path(rel)
+    if not p.is_absolute():
+        return p
+    parts = p.parts
+    if ".processed" in parts:
+        i = len(parts) - 1 - parts[::-1].index(".processed")
+        if len(parts) > i + 3:  # .processed/<date>/<folder>/.../<file>
+            return Path(*parts[i + 2:])
+    return Path(*parts[-2:])
+
+
 def import_asis(library_dir: Path, mapping: dict[str, str]) -> list[tuple[str, str]]:
     """D13: move staged files to Unsorted/, keeping the dump's folder and file names."""
     moved = []
+    unsorted = library_dir / UNSORTED
     for staged, rel in mapping.items():
-        dest = library_dir / UNSORTED / Path(rel).with_suffix(Path(staged).suffix)
+        dest = unsorted / unsorted_name(rel).with_suffix(Path(staged).suffix)
+        if not dest.resolve().is_relative_to(unsorted.resolve()):
+            raise RuntimeError(f"refusing to place {rel} outside {unsorted}")
         dest.parent.mkdir(parents=True, exist_ok=True)
         n = 2
         while dest.exists():
@@ -325,6 +342,22 @@ def import_asis(library_dir: Path, mapping: dict[str, str]) -> list[tuple[str, s
         shutil.move(staged, dest)
         moved.append((staged, str(dest)))
     return moved
+
+
+@contextlib.contextmanager
+def library_lock(state_dir: Path):
+    """One library writer at a time: concurrent beets sessions (review imports, ingest)
+    would contend for library.db and could race on destination paths."""
+    import fcntl
+
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with open(state_dir / "library.lock", "w") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise SystemExit("another command is changing the library (state/library.lock); "
+                             "try again when it finishes") from None
+        yield
 
 
 def open_library():

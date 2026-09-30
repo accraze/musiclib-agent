@@ -1,6 +1,7 @@
 """musiclib: JSON-emitting commands the agent calls. See docs/SPEC.md."""
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -57,22 +58,24 @@ def cmd_import(cfg: config.Config, args) -> None:
 
     conn = db.connect(cfg.db_path)
     importer.migrate(conn)
-    if args.prune_duplicates:
-        _emit(importer.prune_duplicates(conn, apply=args.apply))
-        return
-    if args.remove:
-        if not args.reason:
-            raise SystemExit("--remove needs --reason")
-        _emit(importer.remove_from_library(conn, args.remove, args.reason, args.by))
-        return
-    if args.repair_extras:
-        _emit(importer.repair_extras(conn, cfg.source_dir, apply=args.apply))
-        return
-    if not args.apply:
-        _emit(importer.plan(conn, cfg.source_dir, args.which, args.limit, args.album))
-        return
-    _emit(importer.run(conn, cfg.source_dir, cfg.state_dir / "staging", args.which,
-                       limit=args.limit, only=args.album))
+    mutating = args.apply or args.remove
+    with importer.library_lock(cfg.state_dir) if mutating else contextlib.nullcontext():
+        if args.prune_duplicates:
+            _emit(importer.prune_duplicates(conn, apply=args.apply))
+            return
+        if args.remove:
+            if not args.reason:
+                raise SystemExit("--remove needs --reason")
+            _emit(importer.remove_from_library(conn, args.remove, args.reason, args.by))
+            return
+        if args.repair_extras:
+            _emit(importer.repair_extras(conn, cfg.source_dir, apply=args.apply))
+            return
+        if not args.apply:
+            _emit(importer.plan(conn, cfg.source_dir, args.which, args.limit, args.album))
+            return
+        _emit(importer.run(conn, cfg.source_dir, cfg.state_dir / "staging", args.which,
+                           limit=args.limit, only=args.album))
 
 
 def cmd_review(cfg: config.Config, args) -> None:
@@ -103,7 +106,8 @@ def cmd_retag(cfg: config.Config, args) -> None:
         raise SystemExit("--album or --scan required")
     lib = importer.open_library()
     if args.apply:
-        _emit(retag.apply(conn, lib, args.album, args.by, args.reason or "tags were on the wrong audio"))
+        with importer.library_lock(cfg.state_dir):
+            _emit(retag.apply(conn, lib, args.album, args.by, args.reason or "tags were on the wrong audio"))
     else:
         p = retag.plan(conn, lib, args.album)
         _emit({k: v for k, v in p.items() if not k.startswith("_")})
@@ -126,10 +130,11 @@ def cmd_merge(cfg: config.Config, args) -> None:
 def cmd_resync(cfg: config.Config, args) -> None:
     from . import beetsenv
     beetsenv.setup(cfg)
-    from . import resync
+    from . import importer, resync
 
     conn = db.connect(cfg.db_path)
-    _emit(resync.run(conn, apply=args.apply, limit=args.limit))
+    with importer.library_lock(cfg.state_dir) if args.apply else contextlib.nullcontext():
+        _emit(resync.run(conn, apply=args.apply, limit=args.limit))
 
 
 def cmd_report(cfg: config.Config, args) -> None:

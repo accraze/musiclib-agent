@@ -9,6 +9,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import db
 from .scan import AUDIO_EXTS, scan_file
 
 COMMIT_EVERY = 250
@@ -66,11 +67,35 @@ def _scan_job(source: str, rel: str, do_fingerprint: bool) -> tuple[str, dict]:
 
 def run(conn: sqlite3.Connection, source: Path, *, workers: int, fingerprint: bool = True,
         subdir: str | None = None, limit: int | None = None, progress=sys.stderr) -> dict:
+    """Scan the dump. Paths are stored relative to `source`."""
     if not source.is_dir():
         raise SystemExit(f"source_dir not found: {source}")
-
     args = {"source": str(source), "workers": workers, "fingerprint": fingerprint,
             "subdir": subdir, "limit": limit}
+    found = ((rel, _top_dir(rel), ext, size, mtime) for rel, ext, size, mtime in walk(source, subdir))
+    # Only a full dump scan can tell that a file is gone; absolute (inbox) rows aren't the dump's (D29).
+    prune = subdir is None and limit is None
+    return _scan(conn, source, found, args, workers=workers, fingerprint=fingerprint, limit=limit,
+                 prune=db.is_dump_path if prune else None, progress=progress)
+
+
+def scan_root(conn: sqlite3.Connection, root: Path, *, workers: int, fingerprint: bool = True,
+              progress=sys.stderr) -> dict:
+    """Scan a folder outside the dump (an inbox batch, D29). Paths are stored absolute,
+    top_dir is `root` itself. Read-only on files, like run()."""
+    root = root.resolve()
+    if not root.is_dir():
+        raise SystemExit(f"not a folder: {root}")
+    args = {"root": str(root), "workers": workers, "fingerprint": fingerprint}
+    found = ((str(root / rel), str(root), ext, size, mtime) for rel, ext, size, mtime in walk(root))
+    return _scan(conn, root, found, args, workers=workers, fingerprint=fingerprint,
+                 prune=lambda p: p.startswith(f"{root}/"), progress=progress)
+
+
+def _scan(conn, source: Path, found, args: dict, *, workers: int, fingerprint: bool,
+          limit: int | None = None, prune=None, progress=sys.stderr) -> dict:
+    """Scan (path, top_dir, ext, size, mtime) entries into `files`/`other_files`. `prune`
+    selects existing rows this walk covers; those not found again are deleted."""
     run_id = conn.execute(
         "INSERT INTO runs (command, args, started_at, status) VALUES ('inventory', ?, ?, 'running')",
         (json.dumps(args), now()),
@@ -80,13 +105,13 @@ def run(conn: sqlite3.Connection, source: Path, *, workers: int, fingerprint: bo
     existing = {r["path"]: r for r in conn.execute(
         "SELECT path, size, mtime, error, fingerprint FROM files")}
     seen_audio, seen_other, todo = set(), [], []
-    for rel, ext, size, mtime in walk(source, subdir):
+    for path, top, ext, size, mtime in found:
         if ext in AUDIO_EXTS:
-            seen_audio.add(rel)
-            if _needs_scan(existing.get(rel), size, mtime, fingerprint):
-                todo.append((rel, ext, size, mtime))
+            seen_audio.add(path)
+            if _needs_scan(existing.get(path), size, mtime, fingerprint):
+                todo.append((path, top, ext, size, mtime))
         else:
-            seen_other.append((rel, _top_dir(rel), ext, size, run_id))
+            seen_other.append((path, top, ext, size, run_id))
     unchanged = len(seen_audio) - len(todo)
     if limit:
         todo = todo[:limit]
@@ -97,13 +122,13 @@ def run(conn: sqlite3.Connection, source: Path, *, workers: int, fingerprint: bo
         seen_other,
     )
     removed = 0
-    if subdir is None and limit is None:
-        gone = [p for p in existing if p not in seen_audio]
+    if prune is not None:
+        gone = [p for p in existing if prune(p) and p not in seen_audio]
         conn.executemany("DELETE FROM files WHERE path = ?", [(p,) for p in gone])
         removed = len(gone)
     conn.commit()
 
-    total_bytes = sum(t[2] for t in todo)
+    total_bytes = sum(t[3] for t in todo)
     print(f"inventory: {len(seen_audio)} audio files found, {len(todo)} to scan "
           f"({total_bytes / 1e9:.1f} GB), {unchanged} unchanged skipped", file=progress, flush=True)
 
@@ -114,9 +139,9 @@ def run(conn: sqlite3.Connection, source: Path, *, workers: int, fingerprint: bo
     with ProcessPoolExecutor(max_workers=workers) as pool:
         futures = [pool.submit(_scan_job, str(source), t[0], fingerprint) for t in todo]
         for fut in as_completed(futures):
-            rel, rec = fut.result()
-            _, ext, size, mtime = meta[rel]
-            rec.update(path=rel, top_dir=_top_dir(rel), ext=ext, size=size, mtime=mtime,
+            path, rec = fut.result()
+            _, top, ext, size, mtime = meta[path]
+            rec.update(path=path, top_dir=top, ext=ext, size=size, mtime=mtime,
                        scanned_at=now(), run_id=run_id)
             batch.append(tuple(rec.get(c) for c in FILE_COLUMNS))
             done += 1
