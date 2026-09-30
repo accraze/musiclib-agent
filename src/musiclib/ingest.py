@@ -9,6 +9,7 @@
 Later steps (dedupe against the library, match, import) reuse the dump pipeline.
 """
 
+import json
 import os
 import sqlite3
 import sys
@@ -151,3 +152,159 @@ def scan(conn: sqlite3.Connection, cfg: Config, ref: str | int, *, workers: int,
     return {"batch": b["id"], "folder": b["folder"], "path": str(root),
             "audio_files": inv["audio_files"], "scanned": inv["scanned"], "scan_errors": errors,
             "acoustid": {k: v for k, v in looked.items() if k != "elapsed_s"}, "verify": verdicts}
+
+
+# --- Dedupe (D30) ------------------------------------------------------------------------
+
+DUPES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS ingest_dupes (
+    batch_id  INTEGER NOT NULL REFERENCES ingest_batches(id),
+    path      TEXT NOT NULL,     -- batch folder (ends in /) or file
+    scope     TEXT NOT NULL,     -- folder | file
+    outcome   TEXT NOT NULL,     -- skip (not imported) | review | flag (report only)
+    kind      TEXT NOT NULL,     -- identical | duplicate | upgrade | extra_tracks | edition
+                                 -- | in_batch | in_batch_review | dump_overlap
+    other     TEXT,              -- the copy it was compared with (library dir, batch keeper, dump folder)
+    coverage  REAL,              -- share of this folder's tracks found in `other`
+    reason    TEXT NOT NULL,
+    stats     TEXT               -- JSON: this folder vs other
+);
+CREATE INDEX IF NOT EXISTS ingest_dupes_batch ON ingest_dupes(batch_id);
+"""
+
+
+def _library_rows(conn: sqlite3.Connection) -> list[dict]:
+    """One row per library file, from its original (dump or inbox) file: fingerprint identity,
+    quality and hash of the original, `path` = where it is in the library now, `album` = the
+    release it was imported as. Library copies carry beets' tags, so their own bytes differ."""
+    from .dupes import FILE_ROWS
+    from .importer import current_paths, migrate as importer_migrate
+
+    importer_migrate(conn)
+    placed = current_paths(conn)
+    if not placed:
+        return []
+    released = {}
+    for r in conn.execute("""SELECT m.files, i.album_id FROM imports i JOIN matches m ON m.id = i.match_id
+                             WHERE i.status = 'imported' AND i.album_id IS NOT NULL"""):
+        for f in json.loads(r["files"]):
+            released[f] = r["album_id"]
+    rows = conn.execute(FILE_ROWS.format(where="f.path IN (SELECT value FROM json_each(?))"),
+                        (json.dumps(list(placed)),)).fetchall()
+    return [{**dict(r), "origin": r["path"], "path": placed[r["path"]],
+             "album": released.get(r["path"], r["album"])} for r in rows]
+
+
+def _overlaps(mine: dict, theirs: dict, min_share: float) -> list[tuple]:
+    """(my folder, their folder, shared, share of mine, share of theirs) where either side
+    holds at least `min_share` of the other's tracks (D14)."""
+    index: dict[str, set] = {}
+    for f in theirs.values():
+        for k in f.keys:
+            index.setdefault(k, set()).add(f.path)
+    out = []
+    for f in mine.values():
+        counts: dict[str, int] = {}
+        for k in f.keys:
+            for p in index.get(k, ()):
+                counts[p] = counts.get(p, 0) + 1
+        for p, n in counts.items():
+            t = theirs[p]
+            if n / len(f.keys) >= min_share or n / len(t.keys) >= min_share:
+                out.append((f, t, n, n / len(f.keys), n / len(t.keys)))
+    return out
+
+
+def _quality(f) -> int:
+    from .dupes import quality_tier
+    n = f.files or 1
+    return quality_tier(f.lossless / n > 0.5, f.bitrate_sum / n)
+
+
+def dedupe(conn: sqlite3.Connection, ref: str | int) -> dict:
+    """D30: duplicates inside the batch and against the library. Proposals in ingest_dupes;
+    nothing moves. skip = not imported (the manifest names the kept copy), review = asked,
+    flag = only reported (overlap with dump albums that aren't in the library, Q4)."""
+    from . import dupes
+
+    b = batch(conn, ref)
+    if b["status"] == "claimed":
+        raise SystemExit(f"batch {b['id']} is not scanned yet: run ingest scan first")
+    conn.executescript(DUPES_SCHEMA)
+    root = b["path"]
+    mine_rows, mine = dupes.folders_of(conn.execute(
+        dupes.FILE_ROWS.format(where="f.top_dir = ?"), (root,)).fetchall())
+    out: list[tuple] = []  # (path, scope, outcome, kind, other, coverage, reason, stats)
+
+    # 1. Inside the batch: the dump's own rules (tiers 1-3, D14, D19).
+    gone: set[str] = set()  # batch folders/files already decided
+    for tier, scope, action, reason, keeper, _, _, members in dupes.group(mine_rows, mine):
+        for path, role, cov, st in members:
+            if role == "drop":
+                kind = "in_batch" if action == "auto" else "in_batch_review"
+                out.append((path, scope, "skip" if action == "auto" else "review", kind, keeper,
+                            cov, f"tier {tier}: {reason}", json.dumps(st) if st else None))
+                if action == "auto":
+                    gone.add(path)
+
+    # 2. Against the library, by the originals' identity.
+    lib_rows = _library_rows(conn)
+    _, library = dupes.folders_of(lib_rows)
+    lib_sha = {r["sha256"]: r["path"] for r in lib_rows if r["sha256"]}
+    decided = set(gone)
+    for f, lib, shared, mine_share, lib_share in sorted(
+            _overlaps({p: f for p, f in mine.items() if p not in gone}, library, dupes.CONTAINMENT),
+            key=lambda o: (-o[3], o[1].path)):
+        if f.path in decided:
+            continue  # compared with its best-covering library album already
+        decided.add(f.path)
+        stats = json.dumps({"ingest": f.stats(), "library": lib.stats()})
+        extra = len(f.keys - lib.keys)
+        if f.release and lib.release and f.release != lib.release:
+            o = ("review", "edition", f"tagged as another release than the library copy "
+                 f"({f.release} vs {lib.release}): edition?")
+        elif _quality(f) > _quality(lib):
+            o = ("review", "upgrade", "better audio than the library copy: replace it? (D32)")
+        elif extra:
+            o = ("review", "extra_tracks", f"{extra} track(s) the library copy lacks")
+        else:
+            o = ("skip", "duplicate", "already in the library at equal or better quality")
+        out.append((f.path, "folder", *o[:2], lib.path, round(mine_share, 3), o[2], stats))
+
+    # Identical bytes to a library original, in folders not otherwise matched.
+    for r in mine_rows:
+        folder = dupes._folder(r["path"])
+        if folder not in decided and r["path"] not in gone and r["sha256"] in lib_sha:
+            out.append((r["path"], "file", "skip", "identical", lib_sha[r["sha256"]], 1.0,
+                        "identical bytes to a library file's original", None))
+
+    # 3. Q4: overlap with dump albums that never reached the library (review, dropped): flag only.
+    # Whole folders only: leftovers of an imported folder (a skipped extra) aren't "not imported".
+    placed = {dupes._folder(r["origin"]) for r in lib_rows}
+    _, dump = dupes.folders_of([r for r in conn.execute(
+        dupes.FILE_ROWS.format(where="substr(f.path, 1, 1) != '/'")).fetchall()
+        if dupes._folder(r["path"]) not in placed])
+    flagged = set()
+    for f, d, shared, mine_share, _ in _overlaps(
+            {p: f for p, f in mine.items() if p not in gone}, dump, dupes.CONTAINMENT):
+        if (f.path, d.path) not in flagged:
+            flagged.add((f.path, d.path))
+            out.append((f.path, "folder", "flag", "dump_overlap", d.path, round(mine_share, 3),
+                        "also in the dump, not in the library (review queue or dropped copy)", None))
+
+    with conn:
+        conn.execute("DELETE FROM ingest_dupes WHERE batch_id = ?", (b["id"],))
+        conn.executemany("INSERT INTO ingest_dupes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                         [(b["id"], *o) for o in out])
+        conn.execute("UPDATE ingest_batches SET status = 'deduped' WHERE id = ?", (b["id"],))
+    return dupes_summary(conn, b["id"])
+
+
+def dupes_summary(conn: sqlite3.Connection, bid: int) -> dict:
+    rows = [dict(r) for r in conn.execute(
+        "SELECT path, scope, outcome, kind, other, coverage, reason FROM ingest_dupes "
+        "WHERE batch_id = ? ORDER BY outcome, kind, path", (bid,))]
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[f"{r['outcome']}:{r['kind']}"] = counts.get(f"{r['outcome']}:{r['kind']}", 0) + 1
+    return {"batch": bid, "counts": counts, "items": rows}

@@ -147,6 +147,8 @@ def cmd_ingest(cfg: config.Config, args) -> None:
         _emit(ingest.claim(conn, cfg, args.folder, apply=args.apply, decided_by=args.by))
     elif args.ingest_cmd == "scan":
         _emit(ingest.scan(conn, cfg, args.batch, workers=args.workers))
+    elif args.ingest_cmd == "dedupe":
+        _emit(ingest.dedupe(conn, args.batch))
 
 
 def cmd_report(cfg: config.Config, args) -> None:
@@ -261,6 +263,8 @@ def main(argv: list[str] | None = None) -> None:
     isc = isub.add_parser("scan", help="inventory + AcoustID + verify for one batch (read-only on files)")
     isc.add_argument("--batch", required=True, help="batch id or folder name")
     isc.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2))
+    idd = isub.add_parser("dedupe", help="D30: duplicates within the batch and against the library (proposals)")
+    idd.add_argument("--batch", required=True, help="batch id or folder name")
     ing.set_defaults(func=cmd_ingest)
 
     rep = sub.add_parser("report", help="summarize the inventory as JSON")
