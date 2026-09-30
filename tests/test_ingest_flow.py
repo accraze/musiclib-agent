@@ -118,6 +118,36 @@ def test_dedupe_review_holds_a_strong_match_for_review(env):
     assert ingest.manifest(conn, cfg, 1)["by_status"] == {"review": 3}
 
 
+def _weak(env):
+    cfg, conn, root = env
+    ingest.match(conn, 1, matcher=_matcher({"action": "review", "recommendation": "low", "distance": 0.3,
+                                            "album_id": "rel-1", "candidates": "[]"}), progress=io.StringIO())
+    ingest.import_batch(conn, cfg, 1, apply=True, progress=io.StringIO())
+    b = ingest.batch(conn, 1)
+    assert (b["status"], b["note"]) == ("imported", "1 album(s) not imported yet (review or pending)")
+    return str(root) + "/"
+
+
+def test_album_imported_through_review_completes_its_batch(env):
+    cfg, conn, root = env
+    key = _weak(env)
+    review.decide(conn, [{"album_key": key, "decision": "asis", "reason": "test"}], "user")
+    assert ingest.batch(conn, 1)["note"]                              # decided, not imported yet
+    from musiclib import importer
+    importer.run(conn, cfg.source_dir, cfg.state_dir / "staging", "unsorted", only=[key],
+                 progress=io.StringIO())                              # /review's import step
+    b = ingest.batch(conn, 1)
+    assert (b["status"], b["note"]) == ("imported", None)
+
+
+def test_skipping_the_last_album_completes_its_batch(env):
+    cfg, conn, root = env
+    key = _weak(env)
+    review.decide(conn, [{"album_key": key, "decision": "skip", "reason": "test"}], "user")
+    b = ingest.batch(conn, 1)
+    assert (b["status"], b["note"]) == ("imported", None)
+
+
 def test_strong_match_on_a_release_already_in_the_library_is_held(env):
     cfg, conn, root = env
     mid = conn.execute("INSERT INTO matches (album_key, dirs, files, action, album_id, matched_at) "

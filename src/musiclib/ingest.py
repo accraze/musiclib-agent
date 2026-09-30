@@ -196,7 +196,7 @@ def _library_rows(conn: sqlite3.Connection) -> list[dict]:
 
 
 REFINE_SHARE = 0.5  # folders sharing this much by AcoustID get their other tracks fingerprint-compared
-# Same recording across masters, for album-level dedupe. Measured on Ramones "Leave Home"
+# Same recording across masters, for album-level dedupe (D34). Measured on Ramones "Leave Home"
 # (original MP3 vs 2017 remaster FLAC): same song 0.85-0.96, different songs 0.48-0.55.
 # Stricter than D20's COPY_SIMILARITY (0.9), which must keep a different master inside an album.
 SAME_RECORDING = 0.75
@@ -469,9 +469,25 @@ def import_batch(conn: sqlite3.Connection, cfg: Config, ref: str | int, *, apply
             if importer.select(conn, which, albums=keys):
                 results[which] = importer.run(conn, root, cfg.state_dir / "staging", which,
                                               only=keys, progress=progress)
-    waiting = _waiting(conn, b["id"])
-    _set_status(conn, b["id"], "imported", f"{len(waiting)} album(s) waiting for review" if waiting else None)
-    return {"batch": b["id"], **results, "waiting_for_review": waiting}
+    _set_status(conn, b["id"], "imported")
+    refresh_status(conn, b["id"])
+    return {"batch": b["id"], **results, "waiting_for_review": _waiting(conn, b["id"])}
+
+
+def refresh_status(conn: sqlite3.Connection, bid: int) -> None:
+    """Called after any import or review decision on a batch album, whichever command made it
+    (ingest import, /review's import --which approved, review decide): a matched batch with
+    nothing left to import becomes 'imported'; otherwise the note says what is left."""
+    b = batch(conn, bid)
+    if b["status"] not in ("matched", "imported"):
+        return
+    left = conn.execute("""
+        SELECT COUNT(*) FROM matches m LEFT JOIN imports i ON i.match_id = m.id AND i.status = 'imported'
+        WHERE m.batch_id = ? AND i.match_id IS NULL AND COALESCE(m.decision, '') != 'skip'""", (bid,)).fetchone()[0]
+    if not left:
+        _set_status(conn, bid, "imported")
+    elif b["status"] == "imported":
+        _set_status(conn, bid, "imported", f"{left} album(s) not imported yet (review or pending)")
 
 
 def upgrades(conn: sqlite3.Connection, cfg: Config, ref: str | int, *, apply: bool = False,

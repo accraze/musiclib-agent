@@ -204,6 +204,13 @@ def decide(conn: sqlite3.Connection, decisions: list[dict], decided_by: str) -> 
                          "VALUES (?, ?, ?, ?, ?)",
                          (now(), f"decide_{decision}", key,
                           reason + (f" (release {album_id})" if album_id else ""), decided_by))
+    batches = {r[0] for r in conn.execute(
+        f"SELECT batch_id FROM matches WHERE batch_id IS NOT NULL AND id IN ({','.join('?' * len(rows))})",
+        [r[0] for r in rows])} if rows else set()
+    if batches:  # a skip can finish an ingest batch (M5)
+        from .ingest import refresh_status
+        for bid in batches:
+            refresh_status(conn, bid)
     return {"recorded": len(rows), **Counter(r[2] for r in rows)}
 
 

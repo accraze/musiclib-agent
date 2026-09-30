@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-09-30 (doc rev 72)
+Last synced: 2026-09-30 (doc rev 74)
 -->
 
 # Music Library Agent — Spec
@@ -225,6 +225,21 @@ The library holds 3,314 albums (37,859 audio files, 382 GB) at /srv/data/media/m
 - **Weak matches started (2026-09-29):** 20 approved by hand, 29 more under D26. Library: 3,926 albums, 47,397 files, 474 GB. Open: 122 close, 427 weak, 111 unmatched, 89 in duplicate review, 4 errors.
 - **Needs a hand fix (swapped tracks without a clean pairing):** Potshot *Till I Die*, Augustus Pablo *Earth's Rightful Ruler*, *Silver Monk Time* disk 1. Their import notes point to `musiclib retag --album`.
 
+## Ingestion results (M5)
+
+The first inbox run on 2026-09-30 added 22 albums (284 files, all fingerprint-confirmed) with no errors. Each folder was claimed as its own batch; the originals sit unchanged in inbox/.processed/2026-09-30/.
+
+| Outcome | Albums | Files |
+| --- | --- | --- |
+| Strong match, imported directly | 20 | 258 |
+| Close call, D21 standing approval (Road to Ruin) | 1 | 12 |
+| Weak match, release pinned by you (Leave Home) | 1 | 14 |
+
+- **Duplicates:** none of the albums was already in the library. Two overlapped dump albums that were never imported: Refused, *The Shape of Punk to Come*, and Ramones, *Leave Home*. The inbox FLAC copies were kept and the dump MP3 copies are marked skip.
+- **Leave Home** was disc 1 of the 2017 40th anniversary deluxe. It is pinned to the 1977-02 US reissue LP (an exact 14-track fit), not the 80-track deluxe, which would show 66 missing tracks.
+- **Found on the way (D34):** AcoustID split 3 remastered Leave Home tracks, so the dump overlap went unnoticed at first. Dedupe now compares fingerprints directly when folders already share half their tracks.
+- **Library:** 4,049 albums, 49,012 audio files, 491 GB.
+
 ## Open questions
 
 These need an answer before Milestone 2 (import). Milestone 1 (inventory) needs only the dump path.
@@ -244,6 +259,7 @@ Every design decision is recorded here, newest first. To reverse one, mark it Su
 
 | # | Date | Decision | Rationale | Status |
 | --- | --- | --- | --- | --- |
+| D34 | 2026-09-30 | Ingest dedupe (D30) also compares fingerprints directly: when an inbox folder shares at least half its tracks with a library or dump folder by AcoustID, its other tracks count as the same recording at Chromaprint similarity 0.75 or more, with lengths within 10 s. An ingested album whose match is a release already in the library goes to review, never auto-import. | AcoustID split 3 of 14 remastered tracks of Ramones Leave Home, leaving the copy at 79%, under D14's 90%. Measured there: the same song across masters scores 0.85-0.96, different songs 0.48-0.55. D20's 0.9 stays for copies inside one album, where a different master must be kept. | Accepted |
 | D33 | 2026-09-30 | musiclib retag can promote an extra (D20) onto a release track that beets gave to another file. The extra must fingerprint as exactly that track. Without the user's say it also needs track length to back the swap; with retag --promote (--by user, reason required) the user may overrule release lengths. The displaced file goes back into the album folder from the dump, tags untouched. Never applied automatically after import: flagged for retag --album. All steps are logged. | A bonus track tagged with an album track's title can win beets' pairing: Midnight Cleaners (a 210 s stray on Only a Shadow) and Cellophane Symphony (the 263 s single edit on Sweet Cherry Wine). MusicBrainz lengths there fit neither dump version (212 s, 237 s), so a length rule alone never fixes them; file names settle it, and that is the user's judgment. Of 22 imported albums with a title-sharing extra, the automatic rules change none. | Accepted |
 | D32 | 2026-09-29 | Approved upgrades (a better inbox copy of a library album, D30) import the new copy first, then remove the old library copy with musiclib import --remove, logged with a reason that names the replacement. | The library never loses an album mid-swap and the removal is traceable. The old copy's original stays in the dump or inbox archive, so it can be recovered. | Accepted |
 | D31 | 2026-09-29 | Ingested albums that need review join the shared review queue (matches rows tagged with their ingest batch) and are handled by /review. Standing approvals D21, D22, D24 and D26 apply to them. | One queue and one set of criteria: ingestion is the same pipeline on a smaller input. | Accepted |
@@ -288,5 +304,5 @@ Milestone 1 is read-only and starts once the dump path is known. Each later mile
 | M2 | Dedupe + verify | `musiclib dupes` and `musiclib verify`: duplicate groups at three tiers, keeper picks, tag mismatch list | Done |
 | M3 | Import | beets config, `musiclib import` (dry run, then apply), quarantine and manifest | Done |
 | M4 | Review agent | CLAUDE.md, `/dedupe` and `/review` skills, batch approval flow | In progress |
-| M5 | Ingestion | `inbox/` pipeline and `/ingest` skill, with dedupe against the existing library | In progress |
+| M5 | Ingestion | `inbox/` pipeline and `/ingest` skill, with dedupe against the existing library | Done |
 | M6 | Audit + unattended | `/audit`; optional Agent SDK runner triggered by a watcher or cron | Not started |

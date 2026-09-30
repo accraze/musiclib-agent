@@ -447,6 +447,9 @@ def run(conn: sqlite3.Connection, source: Path, staging_root: Path, which: str, 
                 note = f"{note}; {d23}" if note else d23
                 conn.execute("UPDATE imports SET note = ? WHERE match_id = ?", (note, a["id"]))
                 conn.commit()
+        if status == "imported" and a.get("batch_id"):  # an ingested album (D31), via any command
+            from .ingest import refresh_status
+            refresh_status(conn, a["batch_id"])
         counts[status] += 1
         print(f"  [{n}/{len(albums)}] {status}: {a['album_key']} -> {lib_dir or note}",
               file=progress, flush=True)
