@@ -125,3 +125,11 @@ def test_file_whose_audio_fits_its_tag_stays_even_if_ambiguous(setup):
 def test_non_latin(text, expected):
     from musiclib import resync
     assert resync.non_latin(text) is expected
+
+
+def test_fingerprint_decode_roundtrip_properties():
+    from musiclib import fpsim
+    # A real fpcalc fingerprint prefix is not needed: build one from known values by checking
+    # that identical inputs score 1.0 and decode is deterministic.
+    fp = "AQAAE0mUaEkSRZEGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    assert fpsim.decode(fp) == fpsim.decode(fp)

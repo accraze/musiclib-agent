@@ -242,22 +242,29 @@ def extra_skip_reason(conn: sqlite3.Connection, source: Path, rel: str, album_fi
     return None
 
 
+COPY_SIMILARITY = 0.9  # fingerprint similarity of two encodes of the same recording (~0.98)
+
+
 def _duplicate_of(conn: sqlite3.Connection, rel: str, imported: list[str]) -> str | None:
-    """Same title tag and a length within 3 s of a file already imported on the album: a second
-    copy. A bonus track with a copied title tag has a different length and is kept."""
+    """Same title tag, a length within 3 s, and (when both are fingerprinted) the same audio by
+    direct fingerprint comparison: a second copy of a track already on the album. AcoustID ids
+    aren't enough (it splits encodes); a bonus track with a copied title tag differs in length;
+    a different master of the same recording scores below the threshold and is kept."""
+    from .fpsim import similarity
+
     if not imported:
         return None
-    q = """SELECT lower(trim(f.title)), f.duration, f.title, a.acoustid_id FROM files f
-           LEFT JOIN acoustid_lookups a ON a.fingerprint = f.fingerprint AND a.fp_duration = f.fp_duration
-           WHERE f.path IN ({})"""
+    q = "SELECT lower(trim(title)), duration, title, fingerprint FROM files WHERE path IN ({})"
     me = conn.execute(q.format("?"), (rel,)).fetchone()
     if not me or not me[0] or me[1] is None:
         return None
     marks = ",".join("?" * len(imported))
-    for title, dur, orig, aid in conn.execute(q.format(marks), list(imported)):
-        same_audio = not (aid and me[3]) or aid == me[3]  # both fingerprinted: must be the same audio
-        if title == me[0] and dur is not None and abs(dur - me[1]) <= 3 and same_audio:
-            return orig
+    for title, dur, orig, fp in conn.execute(q.format(marks), list(imported)):
+        if title != me[0] or dur is None or abs(dur - me[1]) > 3:
+            continue
+        if fp and me[3] and similarity(fp, me[3]) < COPY_SIMILARITY:
+            continue
+        return orig
     return None
 
 
