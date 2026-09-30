@@ -9,12 +9,13 @@ from musiclib import acoustid, db, importer, ingest, verify
 ROOT = "/inbox/.processed/2026-09-30/Drop"
 
 
-def add(conn, path, aid, *, top="", sha=None, lossless=0, bitrate=320000, album=None, size=100):
-    fp = f"fp-{path}"
+def add(conn, path, aid, *, top="", sha=None, lossless=0, bitrate=320000, album=None, size=100,
+        fp=None, duration=120.0):
+    fp = fp or f"fp-{path}"
     conn.execute(
         "INSERT INTO files (path, top_dir, ext, size, mtime, sha256, lossless, bitrate, mb_albumid, "
-        "fingerprint, fp_duration, scanned_at) VALUES (?, ?, 'x', ?, 0, ?, ?, ?, ?, ?, 100, 'now')",
-        (path, top, size, sha or f"sha-{path}", lossless, bitrate, album, fp))
+        "fingerprint, fp_duration, duration, scanned_at) VALUES (?, ?, 'x', ?, 0, ?, ?, ?, ?, ?, 100, ?, 'now')",
+        (path, top, size, sha or f"sha-{path}", lossless, bitrate, album, fp, duration))
     conn.execute("INSERT INTO acoustid_lookups (fingerprint, fp_duration, status, acoustid_id, "
                  "recordings, looked_up_at) VALUES (?, 100, 'ok', ?, '[]', 'now')", (fp, aid))
 
@@ -134,6 +135,40 @@ def test_unrelated_album_has_no_rows_and_rerun_replaces(conn):
     assert run(conn) == {}
     assert run(conn) == {}
     assert ingest.batch(conn, 1)["status"] == "deduped"
+
+
+@pytest.fixture
+def same_audio(monkeypatch):
+    """Fake fingerprints 'audio:X' match when X agrees (fpsim needs real Chromaprint data)."""
+    from musiclib import fpsim
+    monkeypatch.setattr(fpsim, "similarity", lambda a, b, **kw: float(a.split(":")[-1] == b.split(":")[-1]))
+
+
+def test_remaster_with_split_acoustids_is_still_a_duplicate(conn, same_audio):
+    """Leave Home case: AcoustID gives 3 of 14 remastered tracks new ids (79% < 90%)."""
+    library_album(conn, "Lib Album", 14)
+    for i in range(14):
+        aid = f"t{i}" if i >= 3 else f"remaster{i}"
+        inbox(conn, f"New/{i}.mp3", aid, fp=f"audio:{i}", duration=120.0 + (2 if i < 3 else 0))
+    for i in range(3):  # give the library originals matching fake fingerprints
+        conn.execute("UPDATE files SET fingerprint = ? WHERE path = ?", (f"lib:{i}", f"Lib Album/{i}.mp3"))
+        conn.execute("INSERT INTO acoustid_lookups (fingerprint, fp_duration, status, acoustid_id, recordings, "
+                     "looked_up_at) VALUES (?, 100, 'ok', ?, '[]', 'now')", (f"lib:{i}", f"t{i}"))
+    assert list(run(conn)) == [("New/", "skip", "duplicate")]
+
+
+def test_fingerprints_do_not_rescue_a_weak_overlap(conn, same_audio):
+    library_album(conn, "Lib Album", 14)
+    for i in range(14):  # only 5 of 14 shared by AcoustID: below REFINE_SHARE, not compared
+        inbox(conn, f"New/{i}.mp3", f"t{i}" if i < 5 else f"other{i}", fp=f"audio:{i}")
+    assert run(conn) == {}
+
+
+def test_different_audio_under_split_ids_stays_extra(conn, same_audio):
+    library_album(conn, "Lib Album", 12)
+    for i in range(12):
+        inbox(conn, f"New/{i}.mp3", f"t{i}" if i < 11 else "new-song", fp=f"audio:x{i}")
+    assert list(run(conn)) == [("New/", "review", "extra_tracks")]
 
 
 def test_dedupe_needs_a_scan(conn):

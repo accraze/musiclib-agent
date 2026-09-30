@@ -112,7 +112,7 @@ class Folder:
 FILE_ROWS = """
     SELECT f.id, f.path, f.size, f.sha256, f.lossless, COALESCE(f.bitrate, 0) AS bitrate,
            f.has_art, NULLIF(f.mb_albumid, '') AS album, a.acoustid_id, v.verdict,
-           lower(trim(f.title)) AS title, f.duration
+           lower(trim(f.title)) AS title, f.duration, f.fingerprint
     FROM files f
     LEFT JOIN acoustid_lookups a ON a.fingerprint = f.fingerprint AND a.fp_duration = f.fp_duration
     LEFT JOIN verify v ON v.file_id = f.id
@@ -124,12 +124,17 @@ def _load(conn: sqlite3.Connection):
     return folders_of(conn.execute(FILE_ROWS.format(where="substr(f.path, 1, 1) != '/'")).fetchall())
 
 
+def track_key(r) -> str:
+    """A file's track identity: its AcoustID, else its bytes."""
+    return f"aid:{r['acoustid_id']}" if r["acoustid_id"] else f"sha:{r['sha256']}"
+
+
 def folders_of(rows) -> tuple[list, dict[str, Folder]]:
-    """Group file rows (columns as in _load) into Folders."""
+    """Group file rows (columns as in FILE_ROWS) into Folders."""
     folders: dict[str, Folder] = {}
     for r in rows:
         d = folders.setdefault(_folder(r["path"]), Folder(_folder(r["path"])))
-        d.keys.add(f"aid:{r['acoustid_id']}" if r["acoustid_id"] else f"sha:{r['sha256']}")
+        d.keys.add(track_key(r))
         d.files += 1
         d.size += r["size"]
         d.lossless += bool(r["lossless"])

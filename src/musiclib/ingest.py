@@ -195,13 +195,52 @@ def _library_rows(conn: sqlite3.Connection) -> list[dict]:
              "album": released.get(r["path"], r["album"])} for r in rows]
 
 
-def _overlaps(mine: dict, theirs: dict, min_share: float) -> list[tuple]:
-    """(my folder, their folder, shared, share of mine, share of theirs) where either side
-    holds at least `min_share` of the other's tracks (D14)."""
+REFINE_SHARE = 0.5  # folders sharing this much by AcoustID get their other tracks fingerprint-compared
+# Same recording across masters, for album-level dedupe. Measured on Ramones "Leave Home"
+# (original MP3 vs 2017 remaster FLAC): same song 0.85-0.96, different songs 0.48-0.55.
+# Stricter than D20's COPY_SIMILARITY (0.9), which must keep a different master inside an album.
+SAME_RECORDING = 0.75
+
+
+def _by_folder(rows) -> dict[str, list]:
+    from .dupes import _folder
+    out: dict[str, list] = {}
+    for r in rows:
+        out.setdefault(_folder(r["path"]), []).append(r)
+    return out
+
+
+def _fingerprint_matches(mine: list, theirs: list, known: set[str]) -> set[str]:
+    """My track keys not already shared by AcoustID whose audio matches one of their unshared
+    tracks by direct fingerprint comparison: AcoustID splits some remasters and encodes of
+    one recording into different ids."""
+    from .dupes import track_key
+    from .fpsim import similarity
+
+    theirs = [r for r in theirs if r["fingerprint"] and track_key(r) not in known]
+    found = set()
+    for a in mine:
+        k = track_key(a)
+        if k in known or k in found or not a["fingerprint"]:
+            continue
+        for b in theirs:
+            if (a["duration"] is not None and b["duration"] is not None
+                    and abs(a["duration"] - b["duration"]) <= 10
+                    and similarity(a["fingerprint"], b["fingerprint"]) >= SAME_RECORDING):
+                found.add(k)
+                break
+    return found
+
+
+def _overlaps(mine: dict, theirs: dict, min_share: float, mine_rows, their_rows) -> list[tuple]:
+    """(my folder, their folder, my keys found in theirs, share of mine, share of theirs) where
+    either side holds at least `min_share` of the other's tracks (D14). Found = same AcoustID,
+    or for folders already sharing REFINE_SHARE, the same audio by fingerprint."""
     index: dict[str, set] = {}
     for f in theirs.values():
         for k in f.keys:
             index.setdefault(k, set()).add(f.path)
+    mine_files, their_files = _by_folder(mine_rows), None
     out = []
     for f in mine.values():
         counts: dict[str, int] = {}
@@ -210,8 +249,13 @@ def _overlaps(mine: dict, theirs: dict, min_share: float) -> list[tuple]:
                 counts[p] = counts.get(p, 0) + 1
         for p, n in counts.items():
             t = theirs[p]
+            same = f.keys & t.keys
+            if REFINE_SHARE <= max(n / len(f.keys), n / len(t.keys)) < min_share:
+                their_files = their_files or _by_folder(their_rows)
+                same = same | _fingerprint_matches(mine_files.get(f.path, []), their_files.get(p, []), same)
+            n = len(same)
             if n / len(f.keys) >= min_share or n / len(t.keys) >= min_share:
-                out.append((f, t, n, n / len(f.keys), n / len(t.keys)))
+                out.append((f, t, same, n / len(f.keys), n / len(t.keys)))
     return out
 
 
@@ -252,14 +296,15 @@ def dedupe(conn: sqlite3.Connection, ref: str | int) -> dict:
     _, library = dupes.folders_of(lib_rows)
     lib_sha = {r["sha256"]: r["path"] for r in lib_rows if r["sha256"]}
     decided = set(gone)
-    for f, lib, shared, mine_share, lib_share in sorted(
-            _overlaps({p: f for p, f in mine.items() if p not in gone}, library, dupes.CONTAINMENT),
+    for f, lib, same, mine_share, lib_share in sorted(
+            _overlaps({p: f for p, f in mine.items() if p not in gone}, library, dupes.CONTAINMENT,
+                      mine_rows, lib_rows),
             key=lambda o: (-o[3], o[1].path)):
         if f.path in decided:
             continue  # compared with its best-covering library album already
         decided.add(f.path)
         stats = json.dumps({"ingest": f.stats(), "library": lib.stats()})
-        extra = len(f.keys - lib.keys)
+        extra = len(f.keys - same)
         if f.release and lib.release and f.release != lib.release:
             o = ("review", "edition", f"tagged as another release than the library copy "
                  f"({f.release} vs {lib.release}): edition?")
@@ -281,12 +326,12 @@ def dedupe(conn: sqlite3.Connection, ref: str | int) -> dict:
     # 3. Q4: overlap with dump albums that never reached the library (review, dropped): flag only.
     # Whole folders only: leftovers of an imported folder (a skipped extra) aren't "not imported".
     placed = {dupes._folder(r["origin"]) for r in lib_rows}
-    _, dump = dupes.folders_of([r for r in conn.execute(
+    dump_rows, dump = dupes.folders_of([r for r in conn.execute(
         dupes.FILE_ROWS.format(where="substr(f.path, 1, 1) != '/'")).fetchall()
         if dupes._folder(r["path"]) not in placed])
     flagged = set()
-    for f, d, shared, mine_share, _ in _overlaps(
-            {p: f for p, f in mine.items() if p not in gone}, dump, dupes.CONTAINMENT):
+    for f, d, _, mine_share, _ in _overlaps(
+            {p: f for p, f in mine.items() if p not in gone}, dump, dupes.CONTAINMENT, mine_rows, dump_rows):
         if (f.path, d.path) not in flagged:
             flagged.add((f.path, d.path))
             out.append((f.path, "folder", "flag", "dump_overlap", d.path, round(mine_share, 3),
@@ -352,6 +397,7 @@ def match(conn: sqlite3.Connection, ref: str | int, *, rematch: bool = False,
     Rows go to `matches` with batch_id, so /review sees them (D31)."""
     from .importer import migrate as importer_migrate
     from .match import COLUMNS, match_album
+    from .review import _imported_releases
 
     matcher = matcher or match_album
     importer_migrate(conn)
@@ -365,6 +411,7 @@ def match(conn: sqlite3.Connection, ref: str | int, *, rematch: bool = False,
     print(f"ingest match: {len(todo)} albums in batch {b['id']}", file=progress, flush=True)
     counts: dict[str, int] = {}
     cols = COLUMNS + ["batch_id"]
+    in_library = _imported_releases(conn)
     for key, dirs, files in todo:
         row = {"album_key": key, "dirs": json.dumps(dirs), "files": json.dumps(files),
                "search_id": None, "matched_at": now(), "batch_id": b["id"]}
@@ -373,6 +420,9 @@ def match(conn: sqlite3.Connection, ref: str | int, *, rematch: bool = False,
         except Exception as e:  # unreadable file, network trouble: record and move on
             row.update(action="error", note=f"{type(e).__name__}: {e}"[:300])
         review, flag = _dupe_notes(conn, b["id"], dirs)
+        if row.get("album_id") in in_library:  # D30 backstop when audio ids missed the copy
+            review = "; ".join(filter(None, (review, f"ingest duplicate review: release already in the "
+                                                     f"library (from {in_library[row['album_id']]})")))
         if review and row["action"] in ("auto", "unsorted"):
             row["action"] = "review"
         row["note"] = "; ".join(n for n in (row.get("note"), review, flag) if n) or None

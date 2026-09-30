@@ -118,6 +118,21 @@ def test_dedupe_review_holds_a_strong_match_for_review(env):
     assert ingest.manifest(conn, cfg, 1)["by_status"] == {"review": 3}
 
 
+def test_strong_match_on_a_release_already_in_the_library_is_held(env):
+    cfg, conn, root = env
+    mid = conn.execute("INSERT INTO matches (album_key, dirs, files, action, album_id, matched_at) "
+                       "VALUES ('Old/', '[\"Old/\"]', '[]', 'auto', 'rel-1', 'now')").lastrowid
+    conn.execute("INSERT INTO imports VALUES (?, NULL, 'apply', 'imported', 'rel-1', '/lib/Old', 3, NULL, 'now')",
+                 (mid,))
+    conn.commit()
+    out = ingest.match(conn, 1, matcher=_matcher({"action": "auto", "recommendation": "strong", "distance": 0,
+                                                  "album_id": "rel-1", "candidates": "[]"}), progress=io.StringIO())
+    assert out == {"batch": 1, "matched": 1, "review": 1}
+    note = conn.execute("SELECT note FROM matches WHERE batch_id = 1").fetchone()[0]
+    assert "release already in the library (from Old/)" in note
+    assert review.stats(conn)["dupe"]["open"] == 1
+
+
 def test_upgrade_removes_the_old_copy_only_after_approved_import(env):
     cfg, conn, root = env
     old_dir = cfg.library_dir / "Old Band" / "Demo"
