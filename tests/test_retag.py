@@ -295,6 +295,21 @@ def test_promotion_count_needs_an_imported_file_with_the_extras_title(with_extra
     assert retag.promotion_count(conn, files) == 1
 
 
+def test_a_file_losing_to_a_stayer_is_not_judged_by_that_tracks_length(setup):
+    conn, build = setup
+    # The Monks: a 1965 demo of Oh, How to Do Now (159 s) holds I Can't Get Over You (164 s); the
+    # album take holds Oh, How to Do Now (197 s) and fits. The demo cannot move: it is a stray,
+    # and its length being closer to its own track must not block the album.
+    tracks = [track(6, "Oh, How to Do Now", 197), track(9, "I Can't Get Over You", 164),
+              track(1, "Monk Time", 167)]
+    lib = build([("A/06.mp3", 197, "rec-6"), ("A/19 demo.mp3", 159, "rec-6"), ("A/13.mp3", 165, "rec-9")],
+                tracks, {"A/06.mp3": "rec-6", "A/19 demo.mp3": "rec-9", "A/13.mp3": "rec-1"})
+    p = retag.plan(conn, lib, "A/")
+    assert p["problems"] == []
+    assert sorted((c["file"], c["to"]) for c in p["changes"]) == [("13.mp3", "I Can't Get Over You"),
+                                                                ("19 demo.mp3", None)]
+
+
 def test_strays_come_off_and_the_real_tracks_take_their_place(with_extras):
     conn, build = with_extras
     # MxPx, Let It Happen: the Suggestion Box demo sits on track 1, demos from elsewhere sit on

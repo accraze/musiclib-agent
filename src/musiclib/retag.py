@@ -168,6 +168,13 @@ def plan(conn: sqlite3.Connection, lib, album_key: str, force: list[str] = ()) -
             foreign[rel] = (item, current)  # its audio is a recording not on the release (D35)
         else:
             problems.append(f"{Path(path).name}: {len(cands)} candidate tracks")
+    # A file moving onto a track whose own file stays (its audio fits) loses: it is foreign too.
+    # Decided first, so the length check below only judges moves that can happen.
+    staying = {c.track_id for _, c, t in assign.values() if c is not None and t is c}
+    for path, (item, cur, tr) in list(assign.items()):
+        if tr is not cur and tr is not None and tr.track_id in staying and cur is not None:
+            del assign[path]
+            foreign[rel_of[path]] = (item, cur)
     # Independent evidence: a moved file's length must fit its new track better than its old one.
     for path, (item, cur, tr) in assign.items():
         if tr is None or cur is None or cur.track_id == tr.track_id or not (tr.length and cur.length):
@@ -178,12 +185,6 @@ def plan(conn: sqlite3.Connection, lib, album_key: str, force: list[str] = ()) -
         if abs(dur - tr.length) >= abs(dur - cur.length):
             problems.append(f"{Path(path).name}: length {dur:.0f}s fits '{cur.title}' "
                             f"({cur.length:.0f}s) at least as well as '{tr.title}' ({tr.length:.0f}s)")
-    # A file moving onto a track whose own file stays (its audio fits) loses: it is foreign too.
-    staying = {c.track_id for _, c, t in assign.values() if c is not None and t is c}
-    for path, (item, cur, tr) in list(assign.items()):
-        if tr is not cur and tr is not None and tr.track_id in staying and cur is not None:
-            del assign[path]
-            foreign[rel_of[path]] = (item, cur)
     targets = [t.track_id for _, _, t in assign.values() if t is not None]
     if len(targets) != len(set(targets)):
         problems.append("two files point at the same release track")
