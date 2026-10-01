@@ -74,13 +74,39 @@ def test_equal_length_tracks_rely_on_fingerprints(setup):
     assert p["problems"] == [] and len(p["changes"]) == 2
 
 
-def test_file_from_another_release_is_a_problem(setup):
+def test_file_from_another_release_whose_length_fits_is_a_problem(setup):
     conn, build = setup
     tracks = [track(1, "A", 100), track(2, "B", 200)]
     lib = build([("A/1.mp3", 100, "rec-1"), ("A/2.mp3", 200, "rec-from-elsewhere")], tracks,
                 {"A/1.mp3": "rec-1", "A/2.mp3": "rec-2"})
     p = retag.plan(conn, lib, "A/")
-    assert any("0 candidate tracks" in x for x in p["problems"])
+    assert p["changes"] == [] and p["_demote"] == []
+    assert any("fingerprint names another recording" in x for x in p["problems"])
+
+
+def test_file_from_another_release_far_off_the_length_comes_off(setup):
+    conn, build = setup
+    # Lee Perry: Perry's Rub A Dub (230 s) holds Time (184 s); nothing else fits Time.
+    tracks = [track(1, "A", 100), track(8, "Time", 184)]
+    lib = build([("A/1.mp3", 100, "rec-1"), ("A/rub.mp3", 230, "rec-rub-a-dub")], tracks,
+                {"A/1.mp3": "rec-1", "A/rub.mp3": "rec-8"})
+    p = retag.plan(conn, lib, "A/")
+    assert p["problems"] == []
+    assert [(c["file"], c["from"], c.get("demote")) for c in p["changes"]] == [("rub.mp3", "Time", True)]
+
+
+def test_file_losing_to_one_that_fits_comes_off_its_own_track(setup):
+    conn, build = setup
+    # Moondawn: an alternate Mindphaser (1564 s) sits on Floating Sequence (1271 s); the reissue's
+    # Mindphaser (1522 s, confirmed) holds Mindphaser. The alternate cannot move there: it comes off.
+    tracks = [track(2, "Mindphaser", 1522), track(3, "Floating Sequence", 1271)]
+    lib = build([("A/supplement.mp3", 1522, "rec-2"), ("A/mindphaser.mp3", 1564, "x")], tracks,
+                {"A/supplement.mp3": "rec-2", "A/mindphaser.mp3": "rec-3"})
+    conn.execute("UPDATE acoustid_lookups SET recordings = '[]', titles = ? WHERE fingerprint = 'fp-A/mindphaser.mp3'",
+                 (json.dumps({"r": {"title": "Mindphaser"}}),))
+    p = retag.plan(conn, lib, "A/")
+    assert p["problems"] == []
+    assert [(c["file"], c.get("demote")) for c in p["changes"]] == [("mindphaser.mp3", True)]
 
 
 def test_tmp_name_keeps_extension():
@@ -187,6 +213,19 @@ def test_closer_length_decides_when_both_fingerprint_as_the_track(with_extras):
     assert p["problems"] == [] and [c["file"] for c in p["changes"]] == ["04 album.mp3"]
 
 
+def test_an_extra_the_user_displaced_is_not_promoted_back(with_extras):
+    conn, build = with_extras
+    # Cellophane Symphony after the user's --promote: the album take (271 s) holds Sweet Cherry Wine,
+    # MusicBrainz says 237 s, and the single edit (263 s) is the extra. Closer length alone must not undo it.
+    tracks = [track(1, "Sweet Cherry Wine", 237)]
+    lib = build([("A/04 album.mp3", 271, "rec-1")], [("A/89 single.mp3", 263, "rec-1")], tracks,
+                {"A/04 album.mp3": "rec-1"})
+    assert [c["file"] for c in retag.plan(conn, lib, "A/")["changes"]] == ["89 single.mp3"]
+    conn.execute("UPDATE audit_log SET decided_by = 'user' WHERE action = 'import_extra'")
+    assert retag.plan(conn, lib, "A/")["changes"] == []
+    assert [c["file"] for c in retag.plan(conn, lib, "A/", force=["89 single.mp3"])["changes"]] == ["89 single.mp3"]
+
+
 def test_alternate_take_of_equal_length_stays_an_extra(with_extras):
     conn, build = with_extras
     lib = build([("A/1.mp3", 200, "rec-1")], [("A/1 alt.mp3", 201, "rec-1")], [track(1, "Song", 200)],
@@ -254,6 +293,36 @@ def test_promotion_count_needs_an_imported_file_with_the_extras_title(with_extra
     assert retag.promotion_count(conn, files) == 0
     conn.execute("UPDATE files SET title = 'Only A Shadow' WHERE path = 'A/stray.mp3'")
     assert retag.promotion_count(conn, files) == 1
+
+
+def test_strays_come_off_and_the_real_tracks_take_their_place(with_extras):
+    conn, build = with_extras
+    # MxPx, Let It Happen: the Suggestion Box demo sits on track 1, demos from elsewhere sit on
+    # tracks 2 and 31, and the real Role Remodeling and Prozac were pushed out as extras.
+    tracks = [track(1, "Role Remodeling", 180), track(2, "Prozac", 150), track(31, "Suggestion Box", 149)]
+    lib = build([("A/34 sb.mp3", 149, "rec-31"), ("A/30 christalena.mp3", 127, "rec-christalena"),
+                 ("A/31 south bound.mp3", 153, "rec-south-bound")],
+                [("A/01 role.mp3", 181, "rec-1"), ("A/02 prozac.mp3", 151, "rec-2")], tracks,
+                {"A/34 sb.mp3": "rec-1", "A/30 christalena.mp3": "rec-2", "A/31 south bound.mp3": "rec-31"})
+    p = retag.plan(conn, lib, "A/")
+    assert p["problems"] == []
+    got = sorted((c["file"], c["to"], c.get("replaces"), bool(c.get("demote"))) for c in p["changes"])
+    assert got == [("01 role.mp3", "Role Remodeling", None, False),          # fills the track 34 vacates
+                   ("02 prozac.mp3", "Prozac", "30 christalena.mp3", False),  # replaces a stray
+                   ("31 south bound.mp3", None, None, True),                  # 34 claims its track
+                   ("34 sb.mp3", "Suggestion Box", None, False)]              # relabel to track 31
+    assert retag._needs_d35(p)
+
+
+def test_extra_filling_an_emptied_track_needs_length(with_extras):
+    conn, build = with_extras
+    tracks = [track(1, "A", 100), track(2, "B", 200)]
+    # x (200 s, B's audio) holds A and moves to B; a 140 s take of A cannot fill A (100 s) by itself.
+    lib = build([("A/x.mp3", 200, "rec-2")], [("A/a take.mp3", 140, "rec-1")], tracks, {"A/x.mp3": "rec-1"})
+    p = retag.plan(conn, lib, "A/")
+    assert p["problems"] == [] and [c["file"] for c in p["changes"]] == ["x.mp3"]
+    p = retag.plan(conn, lib, "A/", force=["a take.mp3"])
+    assert p["problems"] == [] and sorted(c["file"] for c in p["changes"]) == ["a take.mp3", "x.mp3"]
 
 
 def test_current_paths_counts_a_file_placed_again_after_removal(tmp_path):
