@@ -600,6 +600,62 @@ def placements(conn: sqlite3.Connection, sources: list[str] | None = None) -> di
     return out
 
 
+def restore(conn: sqlite3.Connection, source: Path, rel: str, reason: str, decided_by: str, *,
+            track: int | None = None, apply: bool = False) -> dict:
+    """Put a dump file that was removed from the library back into its album folder, copied
+    from the dump (read-only): as an extra, or with `track` on that release track (the user's
+    decision; the track must be free). Dry run unless `apply`."""
+    if decided_by != "user":
+        raise SystemExit("--restore is the user's call: use --by user")
+    if rel in current_paths(conn):
+        raise SystemExit(f"{rel} is already in the library at {current_paths(conn)[rel]}")
+    if not (source / rel).is_file():
+        raise SystemExit(f"{rel} is not in the dump")
+    m = conn.execute("""SELECT m.album_key, m.files, i.album_id, i.library_dir FROM matches m
+        JOIN imports i ON i.match_id = m.id AND i.status = 'imported' AND i.mode = 'apply'
+        WHERE EXISTS (SELECT 1 FROM json_each(m.files) WHERE value = ?)""", (rel,)).fetchone()
+    if m is None:
+        raise SystemExit(f"{rel} belongs to no imported album")
+    placed = current_paths(conn, json.loads(m["files"]))
+    album_dir = Path(os.path.dirname(next(iter(placed.values())))) if placed else Path(m["library_dir"])
+    lib, info, tr = None, None, None
+    if track is not None:
+        from beets import metadata_plugins
+        info = metadata_plugins.album_for_id(m["album_id"])
+        tr = next((t for t in info.tracks if t.index == track), None) if info else None
+        if tr is None:
+            raise SystemExit(f"release {m['album_id']} has no track {track}")
+        lib = open_library()
+        by_path = {os.fsdecode(i.path): i for i in lib.items()}
+        held = [p for p in placed.values() if p in by_path and by_path[p].mb_trackid == tr.track_id]
+        if held:
+            raise SystemExit(f"track {track} '{tr.title}' is held by {Path(held[0]).name}")
+    plan_ = {"album_key": m["album_key"], "file": rel, "into": str(album_dir),
+             "track": f"{tr.index} {tr.title}" if tr else None}
+    if not apply:
+        return {"dry_run": True, **plan_}
+    (_, dest), = place_extras(album_dir, [(source / rel, rel)], move=False)
+    action, why = "import_extra", f"{reason}: restored from the dump as an extra, tags untouched"
+    if tr is not None:
+        from beets import autotag
+        from beets.library import Item
+
+        album_id = next((by_path[p].album_id for p in placed.values() if p in by_path), None)
+        item = Item.from_path(dest)
+        item.album_id = album_id
+        lib.add(item)
+        autotag.apply_metadata(info, [(item, tr)])
+        item.try_write()
+        item.move()
+        item.store()
+        dest, action = os.fsdecode(item.path), "import"
+        why = f"{reason}: restored from the dump onto track {tr.index} '{tr.title}' (user's decision)"
+    conn.execute("INSERT INTO audit_log (ts, action, source_path, dest_path, reason, decided_by) "
+                 "VALUES (?, ?, ?, ?, ?, ?)", (now(), action, rel, dest, why, decided_by))
+    conn.commit()
+    return {"restored": dest, **plan_}
+
+
 def remove_from_library(conn: sqlite3.Connection, dest: str, reason: str, decided_by: str) -> dict:
     """Remove one library file (beets DB and disk), logged. Never touches the dump."""
     import beets

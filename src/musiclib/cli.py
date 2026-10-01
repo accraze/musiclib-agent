@@ -68,6 +68,12 @@ def cmd_import(cfg: config.Config, args) -> None:
                 raise SystemExit("--remove needs --reason")
             _emit(importer.remove_from_library(conn, args.remove, args.reason, args.by))
             return
+        if args.restore:
+            if not args.reason:
+                raise SystemExit("--restore needs --reason")
+            _emit(importer.restore(conn, cfg.source_dir, args.restore, args.reason, args.by,
+                                   track=args.track, apply=args.apply))
+            return
         if args.repair_extras:
             _emit(importer.repair_extras(conn, cfg.source_dir, apply=args.apply))
             return
@@ -223,7 +229,10 @@ def main(argv: list[str] | None = None) -> None:
     imp.add_argument("--album", action="append", help="only this album key (repeatable)")
     imp.add_argument("--apply", action="store_true", help="actually copy files into the library")
     imp.add_argument("--remove", metavar="LIBRARY_FILE", help="remove one file from the library (logged)")
-    imp.add_argument("--reason", help="why (required with --remove)")
+    imp.add_argument("--restore", metavar="DUMP_FILE",
+                     help="put a removed dump file back into its album folder (dry run without --apply)")
+    imp.add_argument("--track", type=int, help="with --restore: put it on this release track (must be free)")
+    imp.add_argument("--reason", help="why (required with --remove and --restore)")
     imp.add_argument("--by", choices=["agent", "user"], default="user", help="who decided (with --remove)")
     imp.add_argument("--repair-extras", action="store_true",
                      help="copy unmapped files missing from already-imported albums (with --apply)")

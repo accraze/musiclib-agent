@@ -446,3 +446,50 @@ def test_retag_takes_a_stray_off_relabels_and_fills_the_emptied_track(env, monke
         "Some Band - Demo/03 Song 3.wav": str(album_dir / "01 Real Title 1.flac")}
     assert _snapshot(cfg.source_dir) == before                 # safety rules 1 and 2
     assert retag.plan(conn, lib, "Some Band - Demo/")["changes"] == []
+
+
+def test_restore_puts_a_removed_file_back_on_its_track(env, monkeypatch):
+    """MF DOOM, Live From Planet X: an Intro removed on a wrong scan length goes back on track 1."""
+    cfg, conn, importer = env
+    from beets.autotag import AlbumInfo, AlbumMatch, TrackInfo
+    from beets.autotag.distance import Distance
+    from beets.autotag.match import Proposal, Recommendation
+    import beets.importer.tasks as tasks
+
+    tracks = [TrackInfo(title=f"Real Title {i}", track_id=f"rec-{i}", index=i, medium=1,
+                        medium_index=i, medium_total=3, length=2.0) for i in (1, 2, 3)]
+    info = AlbumInfo(tracks=tracks, album="Real Album", album_id="rel-1", artist="Real Band",
+                     artist_id="art-1", year=1999, mediums=1)
+
+    def fake_tag_album(items, search_ids=()):
+        items = sorted(items, key=lambda it: it.path)
+        m = AlbumMatch(Distance(), info, dict(zip(items, tracks)), [], [])
+        return "Some Band", "Demo", Proposal([m], Recommendation.medium)
+
+    monkeypatch.setattr(tasks.autotag, "tag_album", fake_tag_album)
+    monkeypatch.setattr("beets.metadata_plugins.album_for_id", lambda _id: info)
+    conn.execute("UPDATE matches SET action = 'review', decision = 'approve', decided_album_id = 'rel-1', "
+                 "decided_by = 'agent'")
+    conn.commit()
+    before = _snapshot(cfg.source_dir)
+    importer.run(conn, cfg.source_dir, cfg.state_dir / "staging", "approved", progress=io.StringIO())
+    album_dir = cfg.library_dir / "Real Band" / "1999 - Real Album"
+    rel = "Some Band - Demo/01 Song 1.mp3"
+    importer.remove_from_library(conn, str(album_dir / "01 Real Title 1.mp3"), "test", "user")
+    assert rel not in importer.current_paths(conn)
+
+    with pytest.raises(SystemExit, match="user"):
+        importer.restore(conn, cfg.source_dir, rel, "r", "agent", track=1)
+    with pytest.raises(SystemExit, match="held by"):
+        importer.restore(conn, cfg.source_dir, rel, "r", "user", track=2)
+    dry = importer.restore(conn, cfg.source_dir, rel, "r", "user", track=1)
+    assert dry["dry_run"] and not (album_dir / "01 Real Title 1.mp3").exists()
+    out = importer.restore(conn, cfg.source_dir, rel, "r", "user", track=1, apply=True)
+    assert out["restored"] == str(album_dir / "01 Real Title 1.mp3")
+    lib = importer.open_library()
+    assert {i.mb_trackid for i in lib.items()} == {"rec-1", "rec-2", "rec-3"}
+    assert EasyID3(album_dir / "01 Real Title 1.mp3")["title"] == ["Real Title 1"]
+    assert importer.current_paths(conn)[rel] == str(album_dir / "01 Real Title 1.mp3")
+    with pytest.raises(SystemExit, match="already in the library"):
+        importer.restore(conn, cfg.source_dir, rel, "r", "user")
+    assert _snapshot(cfg.source_dir) == before                 # safety rules 1 and 2
