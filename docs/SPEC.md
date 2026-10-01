@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-10-01 (doc rev 76)
+Last synced: 2026-10-01 (doc rev 77)
 -->
 
 # Music Library Agent — Spec
@@ -223,7 +223,7 @@ The library holds 3,314 albums (37,859 audio files, 382 GB) at /srv/data/media/m
 - **Split releases merged (2026-09-29):** 22 releases spread over several folders (disc 1/disc 2, reels, parts) were merged into one album each and re-matched. 13 became strong matches and were imported (e.g. Basinski *The Disintegration Loops*, Lee Perry *Arkology*); 9 are back in the review queue. Two more duplicate copies were caught by the new already-in-library check (Pink Fairies, A.R. & Machines). Library: 3,671 albums, 41,745 files, 419 GB. Open: 126 close, 479 weak, 364 unmatched, 89 in duplicate review, 4 errors.
 - **Box sets (2026-09-29):** the Merzbox (41 disc folders, 185 tracks) and *Works of Igor Stravinsky* (13 volume folders, 353 tracks) were merged and imported as single box-set albums; discs already imported as standalone releases stay separate. D24 sent 135 unmatched albums to Unsorted/.
 - **Weak matches started (2026-09-29):** 20 approved by hand, 29 more under D26. Library: 3,926 albums, 47,397 files, 474 GB. Open: 122 close, 427 weak, 111 unmatched, 89 in duplicate review, 4 errors.
-- **Needs a hand fix (swapped tracks without a clean pairing):** Potshot *Till I Die*, Augustus Pablo *Earth's Rightful Ruler*, *Silver Monk Time* disk 1. Their import notes point to `musiclib retag --album`.
+- **Hand fixes done with D35 (2026-10-01):** Potshot *Till I Die*, Augustus Pablo *Earth's Rightful Ruler*, *Silver Monk Time* disk 1, Klaus Schulze *Moondawn*, Psychic TV *Those Who Do Not* and MxPx *Let It Happen*. Strays came off their tracks and the rest were relabeled by fingerprint. Still open: track 14 of *Those Who Do Not*, where two files of about 193 s compete.
 
 ## Ingestion results (M5)
 
