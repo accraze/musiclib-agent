@@ -274,9 +274,17 @@ def _duplicate_of(conn: sqlite3.Connection, rel: str, imported: list[str]) -> st
 
 def _is_whole_album_file(conn: sqlite3.Connection, rel: str, album_files: list[str]) -> bool:
     """Long AND named like the album (or 'full album') AND there are real split tracks.
-    Length alone misfires: a 28-minute live bonus or a 9-minute track on a 3-track 10"."""
+    Length alone misfires: a 28-minute live bonus or a 9-minute track on a 3-track 10".
+    The name misfires on a long title track (Sun Ra, The Magic City): a file AcoustID
+    confirms as one recording is never a whole album."""
     from .verify import norm_title
 
+    try:
+        if conn.execute("SELECT 1 FROM files f JOIN verify v ON v.file_id = f.id "
+                        "WHERE f.path = ? AND v.verdict = 'confirmed'", (rel,)).fetchone():
+            return False
+    except sqlite3.OperationalError:  # verify has not run: no verdicts to go on
+        pass
     marks = ",".join("?" * len(album_files))
     durs = dict(conn.execute(f"SELECT path, COALESCE(duration, 0) FROM files WHERE path IN ({marks})",
                              album_files).fetchall())
@@ -503,12 +511,22 @@ def repair_extras(conn: sqlite3.Connection, source: Path, *, apply: bool = False
         missing = [f for f in json.loads(r["files"]) if f not in done]
         if missing:
             todo.append((dict(r), missing))
+    stale = stale_skips(conn, source)
     if not apply:
         return {"dry_run": True, "albums": len(todo),
                 "files": [{"album": r["album_key"], "missing": m,
                            "skip": {f: why for f in m
                                     if (why := extra_skip_reason(conn, source, f, json.loads(r["files"])))}}
-                          for r, m in todo]}
+                          for r, m in todo],
+                "skips_no_longer_apply": [{"album": s["album_key"], "file": s["rel"], "was": s["was"],
+                                           "into": s["album_dir"]} for s in stale]}
+    for s in stale:
+        (_, dest), = place_extras(Path(s["album_dir"]), [(source / s["rel"], s["rel"])], move=False)
+        conn.execute("INSERT INTO audit_log (ts, action, source_path, dest_path, reason, decided_by) "
+                     "VALUES (?, 'import_extra', ?, ?, ?, 'auto')",
+                     (now(), s["rel"], dest, f"skipped earlier ({s['was']}), which the current rules "
+                                             f"no longer support: kept in the album folder, tags untouched"))
+        conn.commit()
     fixed = 0
     for r, missing in todo:
         album_files = json.loads(r["files"])
@@ -529,7 +547,33 @@ def repair_extras(conn: sqlite3.Connection, source: Path, *, apply: bool = False
                                    f"{len(skipped)} skipped", r["match_id"]))
         conn.commit()
         fixed += 1
-    return {"repaired_albums": fixed}
+    return {"repaired_albums": fixed, "re_placed_skips": len(stale)}
+
+
+def stale_skips(conn: sqlite3.Connection, source: Path) -> list[dict]:
+    """Files of imported albums that an earlier rule skipped (skip_extra) and that the
+    current rules would keep, e.g. a title track once mistaken for a whole-album file."""
+    out = []
+    for r in conn.execute("""
+        SELECT m.album_key, m.files FROM imports i JOIN matches m ON m.id = i.match_id
+        WHERE i.status = 'imported' AND i.mode = 'apply'"""):
+        files = json.loads(r["files"])
+        last = {}
+        for action, src, reason in conn.execute(
+                "SELECT action, source_path, reason FROM audit_log WHERE source_path IN "
+                "(SELECT value FROM json_each(?)) ORDER BY id", (r["files"],)):
+            last[src] = (action, reason)
+        skipped = [(f, why) for f, (action, why) in last.items() if action == "skip_extra"]
+        if not skipped:
+            continue
+        placed = current_paths(conn, files)
+        if not placed:
+            continue
+        for rel, was in skipped:
+            if extra_skip_reason(conn, source, rel, files, list(placed)) is None:
+                out.append({"album_key": r["album_key"], "rel": rel, "was": was,
+                            "album_dir": os.path.dirname(next(iter(placed.values())))})
+    return out
 
 
 PLACED_ACTIONS = ("import", "import_asis", "import_extra", "retag_by_fingerprint", "relocate")

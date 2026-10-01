@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -251,6 +252,59 @@ def test_whole_album_file_needs_length_and_name(env, name, title, minutes, other
     conn.executemany("INSERT INTO files (path, top_dir, ext, size, mtime, title, album, duration, scanned_at) "
                      "VALUES (?, 'X', 'mp3', 1, 0, ?, ?, ?, 'now')", rows)
     assert importer._is_whole_album_file(conn, files[0], files) is expected
+
+
+def _magic_city(conn):
+    """Sun Ra, The Magic City: a 26-minute title track named like the album, plus 4 others."""
+    from musiclib import verify
+
+    conn.executescript(verify.SCHEMA)
+    files = ["M/01 The Magic City.flac", "M/02 The Shadow World.flac", "M/03 Abstract Eye.flac",
+             "M/04 Abstract I.flac", "M/06 The Magic City [Mono Version Ending].flac"]
+    for f, secs in zip(files, [1587, 636, 164, 245, 98]):
+        fid = conn.execute("INSERT INTO files (path, top_dir, ext, size, mtime, title, album, duration, scanned_at) "
+                           "VALUES (?, 'M', 'flac', 1, 0, 'The Magic City', 'The Magic City', ?, 'now')",
+                           (f, secs)).lastrowid
+        if f.startswith("M/01"):
+            conn.execute("INSERT INTO verify (file_id, verdict) VALUES (?, 'confirmed')", (fid,))
+    return files
+
+
+def test_title_track_confirmed_as_one_recording_is_not_a_whole_album(env):
+    cfg, conn, importer = env
+    files = _magic_city(conn)
+    assert importer._is_whole_album_file(conn, files[0], files) is False
+    conn.execute("DELETE FROM verify")
+    assert importer._is_whole_album_file(conn, files[0], files) is True   # what the old rule did
+
+
+def test_repair_re_places_a_skip_the_current_rules_no_longer_support(env, monkeypatch):
+    cfg, conn, importer = env
+    files = _magic_city(conn)
+    monkeypatch.setattr(importer, "_duplicate_of", lambda *a: None)
+    lib_dir = cfg.library_dir / "Sun Ra" / "1966 - The Magic City"
+    lib_dir.mkdir(parents=True)
+    src = cfg.source_dir / "M"
+    src.mkdir()
+    (src / "01 The Magic City.flac").write_bytes(b"title track")
+    mid = conn.execute("INSERT INTO matches (album_key, dirs, files, action, matched_at) "
+                       "VALUES ('M/', '[]', ?, 'review', 'now')", (json.dumps(files),)).lastrowid
+    conn.execute("INSERT INTO imports VALUES (?, NULL, 'apply', 'imported', 'rel', ?, 4, NULL, 'now')",
+                 (mid, str(lib_dir)))
+    for f in files[1:]:
+        conn.execute("INSERT INTO audit_log (ts, action, source_path, dest_path, decided_by) "
+                     "VALUES ('now', 'import', ?, ?, 'agent')", (f, str(lib_dir / Path(f).name)))
+    conn.execute("INSERT INTO audit_log (ts, action, source_path, reason, decided_by) VALUES "
+                 "('now', 'skip_extra', ?, 'whole album as one file; the split tracks were imported', 'agent')",
+                 (files[0],))
+    conn.commit()
+    dry = importer.repair_extras(conn, cfg.source_dir)
+    assert [s["file"] for s in dry["skips_no_longer_apply"]] == [files[0]]
+    assert not (lib_dir / "01 The Magic City.flac").exists()
+    assert importer.repair_extras(conn, cfg.source_dir, apply=True)["re_placed_skips"] == 1
+    assert (lib_dir / "01 The Magic City.flac").read_bytes() == b"title track"
+    assert importer.current_paths(conn)[files[0]] == str(lib_dir / "01 The Magic City.flac")
+    assert importer.repair_extras(conn, cfg.source_dir)["skips_no_longer_apply"] == []
 
 
 def test_extra_duplicating_an_imported_track_is_skipped_but_bonus_with_copied_title_is_kept(env):
