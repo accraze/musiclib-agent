@@ -232,8 +232,7 @@ def _promotions(conn, tracks, dest: dict[str, str], holders: dict[str, str], mov
             if off_e + 3 < off_h:
                 out.append((rel, t, holder))
         elif off_e > off_h + 3:
-            problems.append(f"{Path(dest[rel]).name}: fingerprints as '{t.title}' ({t.length:.0f}s) but its "
-                            f"length {de:.0f}s fits worse than the current file's {dh:.0f}s")
+            continue  # another take or edit of the track: it stays an extra (only --promote overrules)
         else:
             out.append((rel, t, holder))
     targets = [t.track_id for _, t, _ in out]

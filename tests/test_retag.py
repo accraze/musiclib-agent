@@ -195,12 +195,17 @@ def test_alternate_take_of_equal_length_stays_an_extra(with_extras):
     assert p["problems"] == [] and p["changes"] == []
 
 
-def test_extra_whose_length_contradicts_is_a_problem(with_extras):
+def test_extra_whose_length_contradicts_stays_an_extra_without_blocking(with_extras):
     conn, build = with_extras
-    lib = build([("A/1.mp3", 201, "x")], [("A/x.mp3", 320, "rec-1")], [track(1, "Song", 200)], {"A/1.mp3": "rec-1"})
+    # The Warner Bros. Album: a 60 s "Instrumental II" fingerprints as the 6 s "Instrumental".
+    # It is another take, not the track, and must not block the album's other relabels.
+    tracks = [track(1, "Song", 200), track(2, "A", 100), track(3, "B", 300)]
+    lib = build([("A/1.mp3", 201, "x"), ("A/2.mp3", 300, "rec-3"), ("A/3.mp3", 100, "rec-2")],
+                [("A/x.mp3", 320, "rec-1")], tracks, {"A/1.mp3": "rec-1", "A/2.mp3": "rec-2", "A/3.mp3": "rec-3"})
     no_fingerprint_data(conn, "A/1.mp3")
     p = retag.plan(conn, lib, "A/")
-    assert p["changes"] == [] and any("fits worse" in x for x in p["problems"])
+    assert p["problems"] == []
+    assert sorted(c["file"] for c in p["changes"]) == ["2.mp3", "3.mp3"]
 
 
 def test_user_can_force_a_promotion_the_release_lengths_do_not_back(with_extras):
