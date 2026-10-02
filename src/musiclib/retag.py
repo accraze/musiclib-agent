@@ -162,6 +162,8 @@ def plan(conn: sqlite3.Connection, lib, album_key: str, force: list[str] = ()) -
             assign[path] = (item, current, current)  # its audio fits its tag: leave it
         elif len(cands) == 1:
             assign[path] = (item, current, cands[0])
+        elif (pick := _length_tiebreak(cands, lengths.get(rel) or 0)) is not None:
+            assign[path] = (item, current, pick)  # D37: one candidate fits the length, the rest are far off
         elif not recs and not titles:
             assign[path] = (item, current, current)  # no fingerprint data: leave as is
         elif not cands and current is not None:
@@ -224,6 +226,19 @@ def _named(rel: str, dest: dict[str, str], names) -> bool:
 
 
 DEMOTE_SLACK = 10  # seconds: a file this far off its track's length is not that track (D35)
+TIEBREAK_FIT = 3   # seconds: D37, a candidate this close to the file's length fits it
+TIEBREAK_GAP = 6   # seconds: D37, every other candidate must be further off than this
+
+
+def _length_tiebreak(cands, dur: float):
+    """D37. A fingerprint naming several release tracks (AcoustID merging) settles on the one
+    within TIEBREAK_FIT of the file's length, when every other candidate is over TIEBREAK_GAP off."""
+    if not dur or any(not t.length for t in cands):
+        return None
+    near = [t for t in cands if abs(dur - t.length) <= TIEBREAK_FIT]
+    if len(near) == 1 and all(abs(dur - t.length) > TIEBREAK_GAP for t in cands if t is not near[0]):
+        return near[0]
+    return None
 
 
 def _fill_and_demote(conn, tracks, dest, holders, moving, claimed, foreign, lengths, problems,

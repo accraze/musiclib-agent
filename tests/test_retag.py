@@ -144,6 +144,28 @@ def test_file_whose_audio_fits_its_tag_stays_even_if_ambiguous(setup):
     assert p["problems"] == [] and p["changes"] == []
 
 
+@pytest.mark.parametrize("bublight_len,settled", [
+    (163, True),    # 0 s off The Bublight, 9 s off Love Dance
+    (158, False),   # 5 s off The Bublight: no evidence
+])
+def test_length_settles_a_fingerprint_naming_two_tracks(setup, bublight_len, settled):
+    """D37, Joe Meek: The Bublight's fingerprint names The Bublight (163 s) and Love Dance (154 s)."""
+    conn, build = setup
+    tracks = [track(2, "Orbit Around the World", 170), track(4, "The Bublight", 163),
+              track(6, "Love Dance of the Saroos", 154)]
+    lib = build([("A/2.mp3", bublight_len, "rec-4"), ("A/4.mp3", 170, "rec-2"), ("A/6.mp3", 154, "rec-6")],
+                tracks, {"A/2.mp3": "rec-2", "A/4.mp3": "rec-4", "A/6.mp3": "rec-6"})
+    conn.execute("UPDATE acoustid_lookups SET recordings = ? WHERE fingerprint = 'fp-A/2.mp3'",
+                 (json.dumps([{"id": "rec-4", "score": 0.95}, {"id": "rec-6", "score": 0.9}]),))
+    p = retag.plan(conn, lib, "A/")
+    moves = sorted((c["file"], c["to"]) for c in p["changes"])
+    if settled:
+        assert moves == [("2.mp3", "The Bublight"), ("4.mp3", "Orbit Around the World")] and p["problems"] == []
+    else:
+        assert ("2.mp3", "The Bublight") not in moves
+        assert "2.mp3: 2 candidate tracks" in p["problems"]
+
+
 @pytest.mark.parametrize("text,expected", [
     ("Игорь Фёдорович Стравинский", True), ("久石譲", True), ("Béla Bartók", False),
     ("Leftöver Crack", False), ("Bonnie “Prince” Billy", False), ("Melt‐Banana", False), (None, False),
