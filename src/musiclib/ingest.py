@@ -17,6 +17,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from . import acoustid, inventory, verify
+from .dupes import _folder
 from .config import Config
 from .scan import AUDIO_EXTS
 
@@ -203,7 +204,6 @@ SAME_RECORDING = 0.75
 
 
 def _by_folder(rows) -> dict[str, list]:
-    from .dupes import _folder
     out: dict[str, list] = {}
     for r in rows:
         out.setdefault(_folder(r["path"]), []).append(r)
@@ -374,7 +374,7 @@ def albums(conn: sqlite3.Connection, root: str, bid: int):
     skip_files, skip_folders = _skipped(conn, bid)
     for dirs, paths in albums_in_dir(os.fsencode(root)):
         files = sorted(f for f in map(os.fsdecode, paths) if f in audio and f not in skip_files
-                       and not any(f.startswith(d) for d in skip_folders))
+                       and _folder(f) not in skip_folders)  # not subfolders: they're other copies
         if files:
             ds = [os.fsdecode(d).rstrip("/") + "/" for d in dirs]
             yield ds[0], ds, files
@@ -553,7 +553,7 @@ def manifest(conn: sqlite3.Connection, cfg: Config, ref: str | int) -> dict:
             status[f] = (kind, r["note"])
     for r in conn.execute("SELECT path, scope, other, reason FROM ingest_dupes "
                           "WHERE batch_id = ? AND outcome = 'skip'", (b["id"],)):
-        hit = [r["path"]] if r["scope"] == "file" else [f for f in files if f.startswith(r["path"])]
+        hit = [r["path"]] if r["scope"] == "file" else [f for f in files if _folder(f) == r["path"]]
         for f in hit:
             status[f] = ("duplicate", f"{r['reason']}; kept {r['other']}")
     for r in conn.execute("SELECT action, source_path, dest_path, reason FROM audit_log WHERE source_path IN "

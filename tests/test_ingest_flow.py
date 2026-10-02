@@ -205,3 +205,21 @@ def test_fully_skipped_batch_imports_nothing_from_other_batches(env):
     assert plan["auto"]["albums"] == 0 and plan["unsorted"]["albums"] == 0  # not batch 2's album
     res = ingest.import_batch(conn, cfg, 1, apply=True, progress=io.StringIO())
     assert "auto" not in res and not cfg.library_dir.exists()
+
+
+def test_skipped_folder_keeps_its_subfolder_copy(env):
+    cfg, conn, root = env
+    for i in (1, 2):
+        _tone(root / "Remaster" / f"0{i} Song {i}.flac", 440 + 100 * i)
+    ingest.scan(conn, cfg, 1, workers=2, lookup=_no_lookup, progress=io.StringIO())
+    ingest.dedupe(conn, 1)
+    conn.execute("DELETE FROM ingest_dupes")
+    conn.execute("INSERT INTO ingest_dupes VALUES (1, ?, 'folder', 'skip', 'in_batch', ?, 1.0, "
+                 "'tier 2: same tracks', NULL)", (str(root) + "/", str(root) + "/Remaster/"))
+    conn.commit()
+    keys = [k for k, _, _ in ingest.albums(conn, str(root), 1)]
+    assert keys == [str(root) + "/Remaster/"]                         # the kept copy is still an album
+    ingest.match(conn, 1, matcher=_matcher({"action": "unsorted", "recommendation": "none",
+                                            "candidates": "[]"}), progress=io.StringIO())
+    by = ingest.manifest(conn, cfg, 1)["by_status"]
+    assert by == {"duplicate": 3, "pending": 2}
