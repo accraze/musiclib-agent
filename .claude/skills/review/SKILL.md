@@ -38,6 +38,9 @@ approved without asking.
    not the top candidate>, "reason": "<short, specific>"}`. The batch is all-or-nothing.
 6. Import: `uv run musiclib import --which approved --apply` and, if any `asis`,
    `uv run musiclib import --which unsorted --apply`. Report counts and any errors.
+   If an imported album turns out to be on the wrong release, tell the user and, once they
+   approve, `uv run musiclib import --redo <album_key> --release <MBID> --reason "..." --by agent`
+   (dry run first, then `--apply`).
 7. Offer the next batch.
 
 ## Judgment

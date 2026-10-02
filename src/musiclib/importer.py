@@ -656,6 +656,38 @@ def restore(conn: sqlite3.Connection, source: Path, rel: str, reason: str, decid
     return {"restored": dest, **plan_}
 
 
+def redo(conn: sqlite3.Connection, source: Path, staging_root: Path, album_key: str, release: str,
+         reason: str, decided_by: str, *, apply: bool = False, progress=sys.stderr) -> dict:
+    """Re-import an imported album on another release (an approval later found wrong): remove
+    every file it has in the library (logged), re-pin the decision and import it again from
+    the dump (read-only). Dry run unless `apply`."""
+    m = conn.execute("""SELECT m.id, m.files, i.album_id FROM matches m
+        JOIN imports i ON i.match_id = m.id AND i.status = 'imported' AND i.mode = 'apply'
+        WHERE m.album_key = ?""", (album_key,)).fetchone()
+    if m is None:
+        raise SystemExit(f"{album_key} is not an imported, matched album")
+    if release == m["album_id"]:
+        raise SystemExit(f"{album_key} is already on release {release}")
+    placed = current_paths(conn, json.loads(m["files"]))
+    plan_ = {"album_key": album_key, "from_release": m["album_id"], "to_release": release,
+             "remove": sorted(placed.values())}
+    if not apply:
+        return {"dry_run": True, **plan_}
+    why = f"redo on release {release} (was {m['album_id']}): {reason}"
+    for dest in plan_["remove"]:
+        if Path(dest).exists():
+            remove_from_library(conn, dest, why, decided_by)
+    conn.execute("UPDATE matches SET decision = 'approve', decided_album_id = ?, decided_by = ? WHERE id = ?",
+                 (release, decided_by, m["id"]))
+    conn.execute("DELETE FROM imports WHERE match_id = ?", (m["id"],))
+    conn.execute("INSERT INTO audit_log (ts, action, source_path, reason, decided_by) VALUES (?, 'redo', ?, ?, ?)",
+                 (now(), album_key, why, decided_by))
+    conn.commit()
+    res = run(conn, source, staging_root, "approved", only=[album_key], progress=progress)
+    row = conn.execute("SELECT status, library_dir, note FROM imports WHERE match_id = ?", (m["id"],)).fetchone()
+    return {**plan_, "removed": len(plan_["remove"]), "run_id": res["run_id"], **dict(row)}
+
+
 def remove_from_library(conn: sqlite3.Connection, dest: str, reason: str, decided_by: str) -> dict:
     """Remove one library file (beets DB and disk), logged. Never touches the dump."""
     import beets

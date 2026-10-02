@@ -74,6 +74,12 @@ def cmd_import(cfg: config.Config, args) -> None:
             _emit(importer.restore(conn, cfg.source_dir, args.restore, args.reason, args.by,
                                    track=args.track, apply=args.apply))
             return
+        if args.redo:
+            if not (args.release and args.reason):
+                raise SystemExit("--redo needs --release and --reason")
+            _emit(importer.redo(conn, cfg.source_dir, cfg.state_dir / "staging", args.redo, args.release,
+                                args.reason, args.by, apply=args.apply))
+            return
         if args.repair_extras:
             _emit(importer.repair_extras(conn, cfg.source_dir, apply=args.apply))
             return
@@ -232,7 +238,10 @@ def main(argv: list[str] | None = None) -> None:
     imp.add_argument("--restore", metavar="DUMP_FILE",
                      help="put a removed dump file back into its album folder (dry run without --apply)")
     imp.add_argument("--track", type=int, help="with --restore: put it on this release track (must be free)")
-    imp.add_argument("--reason", help="why (required with --remove and --restore)")
+    imp.add_argument("--redo", metavar="ALBUM",
+                     help="re-import an imported album on another release (dry run without --apply)")
+    imp.add_argument("--release", help="with --redo: the MusicBrainz release id to import it on")
+    imp.add_argument("--reason", help="why (required with --remove, --restore and --redo)")
     imp.add_argument("--by", choices=["agent", "user"], default="user", help="who decided (with --remove)")
     imp.add_argument("--repair-extras", action="store_true",
                      help="copy unmapped files missing from already-imported albums (with --apply)")
