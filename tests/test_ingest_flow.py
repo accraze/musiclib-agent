@@ -190,3 +190,18 @@ def test_upgrade_removes_the_old_copy_only_after_approved_import(env):
     reasons = [r[0] for r in conn.execute("SELECT reason FROM audit_log WHERE action = 'remove_from_library'")]
     assert len(reasons) == 2 and all(r.startswith("D32: replaced by") for r in reasons)
     assert ingest.upgrades(conn, cfg, 1)["upgrades"] == []            # idempotent
+
+
+def test_fully_skipped_batch_imports_nothing_from_other_batches(env):
+    cfg, conn, root = env
+    conn.execute("INSERT INTO ingest_dupes VALUES (1, ?, 'folder', 'skip', 'duplicate', '/lib/Old/', 1.0, "
+                 "'already in the library', NULL)", (str(root) + "/",))
+    conn.execute("INSERT INTO matches (album_key, dirs, files, action, recommendation, distance, album_id, "
+                 "matched_at, batch_id) VALUES ('/elsewhere/Other/', '[]', '[]', 'auto', 'strong', 0, "
+                 "'rel-2', '2026-10-02', 2)")
+    conn.commit()
+    assert ingest.match(conn, 1, matcher=_matcher({"action": "auto"}), progress=io.StringIO())["matched"] == 0
+    plan = ingest.import_batch(conn, cfg, 1)
+    assert plan["auto"]["albums"] == 0 and plan["unsorted"]["albums"] == 0  # not batch 2's album
+    res = ingest.import_batch(conn, cfg, 1, apply=True, progress=io.StringIO())
+    assert "auto" not in res and not cfg.library_dir.exists()

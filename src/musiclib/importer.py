@@ -69,7 +69,7 @@ def select(conn: sqlite3.Connection, which: str, limit: int | None = None,
     rows = conn.execute(f"""
         SELECT m.* FROM matches m LEFT JOIN imports i ON i.match_id = m.id AND i.status = 'imported'
         WHERE ({where}) AND i.match_id IS NULL ORDER BY m.album_key""").fetchall()
-    if albums:
+    if albums is not None:
         rows = [r for r in rows if r["album_key"] in set(albums)]
     out = []
     for r in rows[:limit]:

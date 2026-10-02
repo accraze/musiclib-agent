@@ -231,6 +231,9 @@ def merge(conn: sqlite3.Connection, source: Path, keys: list[str], *, apply: boo
         if r["decision"] or r["imported"]:
             raise SystemExit(f"{k}: already decided or imported")
         rows.append(r)
+    batches = {r["batch_id"] for r in rows}
+    if len(batches) > 1:
+        raise SystemExit("albums come from different ingest batches; merge refused")
     dirs = [d for r in rows for d in json.loads(r["dirs"])]
     files = sorted({f for r in rows for f in json.loads(r["files"])})
     if not apply:
@@ -240,8 +243,9 @@ def merge(conn: sqlite3.Connection, source: Path, keys: list[str], *, apply: boo
            "note": f"merged from {len(keys)} folders", "search_id": None, "matched_at": now(), **result}
     with conn:
         conn.executemany("DELETE FROM matches WHERE id = ?", [(r["id"],) for r in rows])
-        conn.execute(f"INSERT INTO matches ({', '.join(COLUMNS)}) VALUES ({', '.join('?' * len(COLUMNS))})",
-                     [row.get(c) for c in COLUMNS])
+        conn.execute(f"INSERT INTO matches ({', '.join(COLUMNS)}, batch_id) "
+                     f"VALUES ({', '.join('?' * len(COLUMNS))}, ?)",
+                     [row.get(c) for c in COLUMNS] + [batches.pop()])  # D31: stays in its batch
         conn.execute("INSERT INTO audit_log (ts, action, source_path, reason, decided_by) "
                      "VALUES (?, 'merge_albums', ?, ?, 'user')",
                      (now(), keys[0], "merged: " + " + ".join(keys)))

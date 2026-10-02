@@ -99,9 +99,11 @@ def test_merge_combines_folders_and_rematches(env, monkeypatch):
                                                "candidates": same, "action": "auto" if len(files) == 4 else "review",
                                                "album_id": "box", "distance": 0.01 if len(files) == 4 else 0.5})
     match.run(conn, src, progress=io.StringIO())
+    match._ensure_imports(conn)
+    conn.execute("UPDATE matches SET batch_id = 7")                   # D31: ingested folders
     [sug] = match.merge_suggestions(conn)
     assert (sug["release"], sug["albums"], sug["files"]) == ("box", ["Box cd 1/", "Box cd 2/"], 4)
     out = match.merge(conn, src, ["Box cd 1/", "Box cd 2/"], apply=True)
     assert out["files"] == 4 and out["action"] == "auto"
-    keys = [r[0] for r in conn.execute("SELECT album_key FROM matches")]
-    assert keys == ["Box cd 1/"]
+    rows = [tuple(r) for r in conn.execute("SELECT album_key, batch_id FROM matches")]
+    assert rows == [("Box cd 1/", 7)]
