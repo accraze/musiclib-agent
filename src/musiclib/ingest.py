@@ -11,8 +11,10 @@ Later steps (dedupe against the library, match, import) reuse the dump pipeline.
 
 import json
 import os
+import re
 import sqlite3
 import sys
+from collections import Counter
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -259,6 +261,65 @@ def _overlaps(mine: dict, theirs: dict, min_share: float, mine_rows, their_rows)
     return out
 
 
+def _name_key(rows) -> tuple[str, str] | None:
+    """D38: a folder's majority (artist, album) by tags, normalized; None without both."""
+    def norm(s, artist=False):
+        s = (s or "").lower().strip()
+        if artist:
+            s = re.sub(r"^the\s+", "", s)
+        return re.sub(r"\W+", "", s)
+    keys = [(norm(r["artist_name"], True), norm(r["album_name"])) for r in rows]
+    keys = [k for k in keys if all(k)]
+    return Counter(keys).most_common(1)[0][0] if keys else None
+
+
+TITLE_LENGTH = 3  # D38: same title within this many seconds counts as the same recording
+
+
+def _alike(a, b) -> bool:
+    """D38: same recording by title and length, or by fingerprint (D34)."""
+    from .fpsim import similarity
+
+    if a["duration"] is None or b["duration"] is None:
+        return False
+    gap = abs(a["duration"] - b["duration"])
+    if a["title"] and a["title"] == b["title"] and gap <= TITLE_LENGTH:
+        return True
+    if gap > 10 or not (a["fingerprint"] and b["fingerprint"]):
+        return False
+    try:
+        return similarity(a["fingerprint"], b["fingerprint"]) >= SAME_RECORDING
+    except ValueError:  # an undecodable fingerprint matches nothing
+        return False
+
+
+def _same_recordings(mine: list, theirs: list) -> tuple[set[str], set[str]]:
+    """D38: (my track keys, their track keys) that are the same recording on the other side:
+    same AcoustID, or `_alike`."""
+    from .dupes import track_key
+
+    mk, tk = set(), set()
+    for a in mine:
+        for b in theirs:
+            if track_key(a) == track_key(b) or _alike(a, b):
+                mk.add(track_key(a))
+                tk.add(track_key(b))
+    return mk, tk
+
+
+def _classify(f, lib, same: set) -> tuple[str, str, str]:
+    """(outcome, kind, reason) for a batch folder that holds a library folder or is held by it."""
+    extra = len(f.keys - same)
+    if f.release and lib.release and f.release != lib.release:
+        return ("review", "edition", f"tagged as another release than the library copy "
+                f"({f.release} vs {lib.release}): edition?")
+    if _quality(f) > _quality(lib):
+        return ("review", "upgrade", "better audio than the library copy: replace it? (D32)")
+    if extra:
+        return ("review", "extra_tracks", f"{extra} track(s) the library copy lacks")
+    return ("skip", "duplicate", "already in the library at equal or better quality")
+
+
 def _quality(f) -> int:
     from .dupes import quality_tier
     n = f.files or 1
@@ -304,17 +365,36 @@ def dedupe(conn: sqlite3.Connection, ref: str | int) -> dict:
             continue  # compared with its best-covering library album already
         decided.add(f.path)
         stats = json.dumps({"ingest": f.stats(), "library": lib.stats()})
-        extra = len(f.keys - same)
-        if f.release and lib.release and f.release != lib.release:
-            o = ("review", "edition", f"tagged as another release than the library copy "
-                 f"({f.release} vs {lib.release}): edition?")
-        elif _quality(f) > _quality(lib):
-            o = ("review", "upgrade", "better audio than the library copy: replace it? (D32)")
-        elif extra:
-            o = ("review", "extra_tracks", f"{extra} track(s) the library copy lacks")
-        else:
-            o = ("skip", "duplicate", "already in the library at equal or better quality")
+        o = _classify(f, lib, same)
         out.append((f.path, "folder", *o[:2], lib.path, round(mine_share, 3), o[2], stats))
+
+    # D38: library folders of the same artist and album, however few tracks AcoustID links
+    # (remasters it splits). Held either way at D14's share: as above; else an edition to review.
+    mine_files, lib_files = _by_folder(mine_rows), _by_folder(lib_rows)
+    named: dict[tuple, list[str]] = {}
+    for p, rows in lib_files.items():
+        if (k := _name_key(rows)):
+            named.setdefault(k, []).append(p)
+    for p, f in sorted(mine.items()):
+        k = _name_key(mine_files.get(p, []))
+        if p in decided or not k or k not in named:
+            continue
+        best = None
+        for lp in named[k]:
+            lib = library[lp]
+            mk, tk = _same_recordings(mine_files[p], lib_files[lp])
+            cand = (max(len(mk) / len(f.keys), len(tk) / len(lib.keys)), lp, mk, tk)
+            best = max(best, cand, key=lambda c: c[0]) if best else cand
+        share, lp, mk, tk = best
+        lib = library[lp]
+        decided.add(p)
+        stats = json.dumps({"ingest": f.stats(), "library": lib.stats()})
+        if share >= dupes.CONTAINMENT:
+            o = _classify(f, lib, mk)
+        else:
+            o = ("review", "edition", f"same artist and album as the library copy, but only {len(tk)} of "
+                 f"its {len(lib.keys)} tracks match: another master or edition? (D38)")
+        out.append((f.path, "folder", *o[:2], lib.path, round(len(mk) / len(f.keys), 3), o[2], stats))
 
     # Identical bytes to a library original, in folders not otherwise matched.
     for r in mine_rows:

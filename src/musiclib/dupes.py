@@ -112,7 +112,8 @@ class Folder:
 FILE_ROWS = """
     SELECT f.id, f.path, f.size, f.sha256, f.lossless, COALESCE(f.bitrate, 0) AS bitrate,
            f.has_art, NULLIF(f.mb_albumid, '') AS album, a.acoustid_id, v.verdict,
-           lower(trim(f.title)) AS title, f.duration, f.fingerprint
+           lower(trim(f.title)) AS title, f.duration, f.fingerprint,
+           COALESCE(NULLIF(f.albumartist, ''), f.artist) AS artist_name, f.album AS album_name
     FROM files f
     LEFT JOIN acoustid_lookups a ON a.fingerprint = f.fingerprint AND a.fp_duration = f.fp_duration
     LEFT JOIN verify v ON v.file_id = f.id

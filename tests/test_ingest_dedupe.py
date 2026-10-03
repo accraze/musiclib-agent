@@ -10,12 +10,14 @@ ROOT = "/inbox/.processed/2026-09-30/Drop"
 
 
 def add(conn, path, aid, *, top="", sha=None, lossless=0, bitrate=320000, album=None, size=100,
-        fp=None, duration=120.0):
+        fp=None, duration=120.0, artist=None, album_name=None, title=None):
     fp = fp or f"fp-{path}"
     conn.execute(
         "INSERT INTO files (path, top_dir, ext, size, mtime, sha256, lossless, bitrate, mb_albumid, "
-        "fingerprint, fp_duration, duration, scanned_at) VALUES (?, ?, 'x', ?, 0, ?, ?, ?, ?, ?, 100, ?, 'now')",
-        (path, top, size, sha or f"sha-{path}", lossless, bitrate, album, fp, duration))
+        "fingerprint, fp_duration, duration, artist, album, title, scanned_at) "
+        "VALUES (?, ?, 'x', ?, 0, ?, ?, ?, ?, ?, 100, ?, ?, ?, ?, 'now')",
+        (path, top, size, sha or f"sha-{path}", lossless, bitrate, album, fp, duration, artist, album_name,
+         title))
     conn.execute("INSERT INTO acoustid_lookups (fingerprint, fp_duration, status, acoustid_id, "
                  "recordings, looked_up_at) VALUES (?, 100, 'ok', ?, '[]', 'now')", (fp, aid))
 
@@ -24,11 +26,13 @@ def inbox(conn, rel, aid, **kw):
     add(conn, f"{ROOT}/{rel}", aid, top=ROOT, **kw)
 
 
-def library_album(conn, key, n, *, release="R1", lossless=0, bitrate=320000, prefix="t"):
-    """A dump folder imported into the library the way musiclib import records it."""
+def library_album(conn, key, n, *, release="R1", lossless=0, bitrate=320000, prefix="t", **tags):
+    """A dump folder imported into the library the way musiclib import records it. `tags`:
+    per-track callables or values for add()'s artist/album_name/title/duration."""
     files = [f"{key}/{i}.mp3" for i in range(n)]
     for i, f in enumerate(files):
-        add(conn, f, f"{prefix}{i}", lossless=lossless, bitrate=bitrate, album=release)
+        add(conn, f, f"{prefix}{i}", lossless=lossless, bitrate=bitrate, album=release,
+            **{k: v(i) if callable(v) else v for k, v in tags.items()})
     mid = conn.execute("INSERT INTO matches (album_key, dirs, files, action, matched_at) "
                        "VALUES (?, ?, ?, 'auto', 'now')", (key + "/", json.dumps([key + "/"]),
                                                             json.dumps(files))).lastrowid
@@ -175,3 +179,39 @@ def test_dedupe_needs_a_scan(conn):
     conn.execute("UPDATE ingest_batches SET status = 'claimed'")
     with pytest.raises(SystemExit, match="not scanned"):
         ingest.dedupe(conn, 1)
+
+
+NAMES = {"artist": "The Band", "album_name": "Record"}
+
+
+def _remaster(conn, n, lengths, *, bitrate, release=None, artist="Band", album_name="record!"):
+    """A batch copy of library 'Lib Album' whose tracks AcoustID filed under new ids."""
+    for i in range(n):
+        inbox(conn, f"Remaster/{i}.mp3", f"new{i}", bitrate=bitrate, album=release, title=f"song {i}",
+              duration=lengths[i], artist=artist, album_name=album_name)
+
+
+def test_remaster_of_a_same_named_album_is_held_by_title_and_length(conn):
+    library_album(conn, "Lib Album", 7, bitrate=192000, title=lambda i: f"song {i}", duration=200.0, **NAMES)
+    _remaster(conn, 7, [201.0] * 7, bitrate=320000)                 # AcoustID links none; +1 s each
+    items = run(conn)
+    assert ("Remaster/", "review", "upgrade") in items               # D38 -> D32, not a new album
+
+
+def test_same_named_album_at_equal_quality_is_a_duplicate(conn):
+    library_album(conn, "Lib Album", 8, title=lambda i: f"song {i}", duration=200.0, **NAMES)
+    _remaster(conn, 8, [202.0] * 8, bitrate=320000)
+    assert ("Remaster/", "skip", "duplicate") in run(conn)
+
+
+def test_same_named_album_with_other_masters_goes_to_review(conn):
+    library_album(conn, "Lib Album", 8, title=lambda i: f"song {i}", duration=200.0, **NAMES)
+    _remaster(conn, 8, [202.0] * 4 + [208.0] * 4, bitrate=320000)  # 4 tracks 8 s longer
+    item = run(conn)[("Remaster/", "review", "edition")]
+    assert "only 4 of its 8 tracks match" in item["reason"]
+
+
+def test_other_names_are_not_compared(conn):
+    library_album(conn, "Lib Album", 8, title=lambda i: f"song {i}", duration=200.0, **NAMES)
+    _remaster(conn, 8, [200.0] * 8, bitrate=320000, album_name="Another Record")
+    assert run(conn) == {}

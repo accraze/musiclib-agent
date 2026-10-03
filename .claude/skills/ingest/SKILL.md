@@ -32,7 +32,9 @@ Safety rules apply (docs/SPEC.md). In particular:
    - `skip:identical`, `skip:in_batch`: byte copies or a worse copy inside the batch.
    - `review:upgrade`: better audio than the library copy (e.g. FLAC over MP3).
    - `review:extra_tracks`: tracks the library copy lacks (bonus tracks, a fuller edition).
-   - `review:edition`: tagged as another release of an album already in the library.
+   - `review:edition`: tagged as another release of an album already in the library, or (D38)
+     same artist and album name as a library folder but too few tracks match (another master,
+     often a remaster AcoustID split). Compare the two copies before proposing.
    - `flag:dump_overlap`: the same album sits in the dump without being in the library
      (it's in the review queue, or it was a dropped copy). Only mention it; don't act on it.
 5. **Match**: `uv run musiclib ingest match --batch <id>` (about 5 s per album). Albums
