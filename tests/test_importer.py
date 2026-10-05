@@ -546,3 +546,55 @@ def test_redo_reimports_an_album_on_another_release(env, monkeypatch):
     assert conn.execute("SELECT COUNT(*) FROM audit_log WHERE action = 'remove_from_library'").fetchone()[0] == 3
     assert conn.execute("SELECT decided_album_id FROM matches").fetchone()[0] == "rel-right"
     assert _snapshot(cfg.source_dir) == before                 # safety rules 1 and 2
+
+
+def test_redo_asis_sends_an_imported_album_to_unsorted(env, monkeypatch):
+    """D40, Galactic Zoo Dossier: approved on a release its track splits don't fit, sent to Unsorted."""
+    cfg, conn, importer = env
+    from beets.autotag import AlbumInfo, AlbumMatch, TrackInfo
+    from beets.autotag.distance import Distance
+    from beets.autotag.match import Proposal, Recommendation
+    import beets.importer.tasks as tasks
+
+    tracks = [TrackInfo(title=f"Wrong {i}", track_id=f"rel-wrong-rec-{i}", index=i, medium=1,
+                        medium_index=i, medium_total=3, length=2.0) for i in (1, 2, 3)]
+    info = AlbumInfo(tracks=tracks, album="Wrong Album", album_id="rel-wrong", artist="Real Band",
+                     artist_id="art-1", year=1999, mediums=1)
+
+    def fake_tag_album(items, search_ids=()):
+        items = sorted(items, key=lambda it: it.path)
+        m = AlbumMatch(Distance(), info, dict(zip(items, info.tracks)), [], [])
+        return "Some Band", "Demo", Proposal([m], Recommendation.medium)
+
+    monkeypatch.setattr(tasks.autotag, "tag_album", fake_tag_album)
+    conn.execute("UPDATE matches SET action = 'review', decision = 'approve', decided_album_id = 'rel-wrong', "
+                 "decided_by = 'agent'")
+    conn.commit()
+    before = _snapshot(cfg.source_dir)
+    staging, key = cfg.state_dir / "staging", "Some Band - Demo/"
+    importer.run(conn, cfg.source_dir, staging, "approved", progress=io.StringIO())
+    wrong_dir = cfg.library_dir / "Real Band" / "1999 - Wrong Album"
+    assert len([p for p in wrong_dir.iterdir() if p.suffix != ".jpg"]) == 3
+
+    with pytest.raises(SystemExit, match="exactly one"):
+        importer.redo(conn, cfg.source_dir, staging, key, "rel-other", "r", "agent", asis=True)
+    with pytest.raises(SystemExit, match="exactly one"):
+        importer.redo(conn, cfg.source_dir, staging, key, None, "r", "agent")
+    dry = importer.redo(conn, cfg.source_dir, staging, key, None, "splits fit no release", "agent", asis=True)
+    assert dry["dry_run"] and dry["to_release"] == "asis" and len(dry["remove"]) == 3
+    assert wrong_dir.exists()
+
+    out = importer.redo(conn, cfg.source_dir, staging, key, None, "splits fit no release", "agent",
+                        asis=True, apply=True, progress=io.StringIO())
+    assert out["status"] == "imported" and out["removed"] == 3
+    assert not wrong_dir.exists()
+    assert not list(importer.open_library().items())
+    unsorted = cfg.library_dir / "Unsorted" / "Some Band - Demo"
+    names = sorted(p.name for p in unsorted.rglob("*") if p.is_file())
+    assert names == ["01 Song 1.mp3", "02 Song 2.mp3", "03 Song 3.flac"]  # D13 names kept; D7 wav->flac
+    row = conn.execute("SELECT decision, decided_album_id FROM matches").fetchone()
+    assert tuple(row) == ("asis", None)
+    assert conn.execute("SELECT COUNT(*) FROM audit_log WHERE action = 'remove_from_library'").fetchone()[0] == 3
+    with pytest.raises(SystemExit, match="not an imported, matched album"):
+        importer.redo(conn, cfg.source_dir, staging, key, None, "again", "agent", asis=True)
+    assert _snapshot(cfg.source_dir) == before                 # safety rules 1 and 2

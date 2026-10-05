@@ -40,7 +40,8 @@ approved without asking.
    `uv run musiclib import --which unsorted --apply`. Report counts and any errors.
    If an imported album turns out to be on the wrong release, tell the user and, once they
    approve, `uv run musiclib import --redo <album_key> --release <MBID> --reason "..." --by agent`
-   (dry run first, then `--apply`).
+   (dry run first, then `--apply`). If no release fits (track splits match no edition), use
+   `--asis` instead of `--release` to send it to Unsorted/ (D40).
 7. Offer the next batch.
 
 ## Judgment

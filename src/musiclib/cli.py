@@ -75,10 +75,10 @@ def cmd_import(cfg: config.Config, args) -> None:
                                    track=args.track, apply=args.apply))
             return
         if args.redo:
-            if not (args.release and args.reason):
-                raise SystemExit("--redo needs --release and --reason")
+            if not args.reason or bool(args.release) == args.asis:
+                raise SystemExit("--redo needs --reason and either --release or --asis")
             _emit(importer.redo(conn, cfg.source_dir, cfg.state_dir / "staging", args.redo, args.release,
-                                args.reason, args.by, apply=args.apply))
+                                args.reason, args.by, asis=args.asis, apply=args.apply))
             return
         if args.repair_extras:
             _emit(importer.repair_extras(conn, cfg.source_dir, apply=args.apply))
@@ -241,6 +241,8 @@ def main(argv: list[str] | None = None) -> None:
     imp.add_argument("--redo", metavar="ALBUM",
                      help="re-import an imported album on another release (dry run without --apply)")
     imp.add_argument("--release", help="with --redo: the MusicBrainz release id to import it on")
+    imp.add_argument("--asis", action="store_true",
+                     help="with --redo: send it to Unsorted/ as the dump has it instead (D40)")
     imp.add_argument("--reason", help="why (required with --remove, --restore and --redo)")
     imp.add_argument("--by", choices=["agent", "user"], default="user", help="who decided (with --remove)")
     imp.add_argument("--repair-extras", action="store_true",
