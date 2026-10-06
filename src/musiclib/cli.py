@@ -122,7 +122,7 @@ def cmd_retag(cfg: config.Config, args) -> None:
             raise SystemExit("--promote needs --reason")
         with importer.library_lock(cfg.state_dir):
             _emit(retag.apply(conn, lib, args.album, args.by, args.reason or "tags were on the wrong audio",
-                              source=cfg.source_dir, force=args.promote))
+                              source=cfg.source_dir, force=args.promote, strict=False))
     else:
         p = retag.plan(conn, lib, args.album, args.promote)
         _emit({k: v for k, v in p.items() if not k.startswith("_")})

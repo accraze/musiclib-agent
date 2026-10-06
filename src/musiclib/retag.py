@@ -194,8 +194,9 @@ def plan(conn: sqlite3.Connection, lib, album_key: str, force: list[str] = ()) -
               if t is not None and (c is None or c.track_id != t.track_id)}
     claimed = {t.track_id for p, (_, c, t) in assign.items() if rel_of[p] in moving}
     promote = _promotions(conn, info.tracks, dest, holders, moving | set(foreign), lengths, problems, force)
+    stays: list[str] = []
     filled, stuck = _fill_and_demote(conn, info.tracks, dest, holders, moving, claimed, foreign, lengths,
-                                     problems, force)
+                                     problems, force, stays)
     promote += filled
     demote = [(rel, cur) for rel, (_, cur) in foreign.items()
               if rel not in stuck and rel not in {h for _, _, h in filled}]
@@ -210,7 +211,7 @@ def plan(conn: sqlite3.Connection, lib, album_key: str, force: list[str] = ()) -
                  "lengths": {"track": round(cur.length or 0), "file": round(lengths.get(rel) or 0)}}
                 for rel, cur in demote]
     return {"album_key": album_key, "release": m["album_id"], "changes": changes, "problems": problems,
-            "_info": info, "_assign": assign, "_promote": promote, "_demote": demote}
+            "_info": info, "_assign": assign, "_promote": promote, "_demote": demote, "_stays": stays}
 
 
 def _user_displaced(conn: sqlite3.Connection, rel: str) -> bool:
@@ -242,7 +243,7 @@ def _length_tiebreak(cands, dur: float):
 
 
 def _fill_and_demote(conn, tracks, dest, holders, moving, claimed, foreign, lengths, problems,
-                     force) -> tuple[list[tuple[str, object, str | None]], set[str]]:
+                     force, stays: list[str]) -> tuple[list[tuple[str, object, str | None]], set[str]]:
     """D35. A foreign file (its fingerprint names a recording not on the release) comes off its
     track when an extra or a moving file fits that track, or when its length is more than
     DEMOTE_SLACK off. Extras then fill tracks vacated this way or by a relabel, when their
@@ -272,6 +273,7 @@ def _fill_and_demote(conn, tracks, dest, holders, moving, claimed, foreign, leng
         stuck.add(rel)
         problems.append(f"{Path(dest[rel]).name}: fingerprint names another recording, but its length "
                         f"{dur:.0f}s fits '{cur.title}' ({cur.length or 0:.0f}s); no other file fits that track")
+        stays.append(problems[-1])  # D36: nothing claims or fills its track; it stays where it is
     for tid in sorted(vacated):
         t, cands = by_id[tid], fits.get(tid, [])
         ok = [e for e in cands if _named(e, dest, force)
@@ -341,16 +343,26 @@ def tmp_name(path: Path) -> Path:
     return path.with_name(path.stem + ".retag-tmp" + path.suffix)
 
 
+def blocking(p: dict, strict: bool = True) -> list[str]:
+    """Problems that stop `apply`. D36: by hand (not strict), a file that only stays where it is
+    (nothing claims or fills its track) does not block a plan's clean changes; D23's automatic
+    relabel stays strict. A plan with nothing to change is never applied."""
+    if strict or not p["changes"]:
+        return p["problems"]
+    return [x for x in p["problems"] if x not in p["_stays"]]
+
+
 def apply(conn: sqlite3.Connection, lib, album_key: str, decided_by: str, reason: str, *,
-          source: Path | None = None, promote: bool = True, force: list[str] = ()) -> dict:
+          source: Path | None = None, promote: bool = True, force: list[str] = (), strict: bool = True) -> dict:
     from beets import autotag
     from beets.library import Item
 
     if force and decided_by != "user":
         raise SystemExit("--promote is the user's call (D33): use --by user")
     p = plan(conn, lib, album_key, force)
-    if p["problems"]:
+    if blocking(p, strict):
         raise SystemExit(f"{album_key}: not a clean pairing, nothing changed: {p['problems']}")
+    left_alone = [x.split(":", 1)[0] for x in p["problems"]]
     from .importer import current_paths
 
     rel_of = {d: s for s, d in current_paths(conn).items()}
@@ -429,7 +441,8 @@ def apply(conn: sqlite3.Connection, lib, album_key: str, decided_by: str, reason
                   + ("" if holder else ", filled an emptied track (D35)"), decided_by)])
             conn.commit()
             promoted += 1
-    return {"album_key": album_key, "retagged": len(moving), "promoted": promoted, "demoted": demoted}
+    out = {"album_key": album_key, "retagged": len(moving), "promoted": promoted, "demoted": demoted}
+    return {**out, "left_alone": left_alone} if left_alone else out
 
 
 def _needs_d35(p: dict) -> bool:

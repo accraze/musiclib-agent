@@ -369,3 +369,35 @@ def test_current_paths_counts_a_file_placed_again_after_removal(tmp_path):
     conn.executemany("INSERT INTO audit_log (ts, action, source_path, dest_path, decided_by) "
                      "VALUES ('now', ?, ?, ?, 'auto')", rows)
     assert importer.current_paths(conn) == {"a.mp3": "/lib/a.mp3", "b.mp3": "/lib/02 X.mp3"}
+
+
+def test_a_file_that_only_stays_does_not_block_a_manual_apply(setup):
+    """D36, King of the Dub Rock: a clean swap beside a file flagged only because it stays put."""
+    conn, build = setup
+    tracks = [track(1, "Honey", 200), track(2, "James", 300), track(3, "Coxsone", 150)]
+    lib = build([("A/1.mp3", 300, "rec-2"), ("A/2.mp3", 200, "rec-1"), ("A/3.mp3", 150, "rec-coxson")], tracks,
+                {"A/1.mp3": "rec-1", "A/2.mp3": "rec-2", "A/3.mp3": "rec-3"})
+    p = retag.plan(conn, lib, "A/")
+    assert len(p["changes"]) == 2 and p["_stays"] == p["problems"] and len(p["problems"]) == 1
+    assert retag.blocking(p) == p["problems"]               # D23 after import: strict
+    assert retag.blocking(p, strict=False) == []            # by hand: the swap goes ahead
+    with pytest.raises(SystemExit, match="not a clean pairing"):
+        retag.apply(conn, lib, "A/", "agent", "r")
+
+
+def test_other_problems_still_block_a_manual_apply(setup):
+    conn, build = setup
+    tracks = [track(1, "Autobiography", 417), track(2, "Socca", 356), track(3, "C", 150)]
+    lib = build([("A/1.mp3", 417, "rec-2"), ("A/2.mp3", 356, "rec-1"), ("A/3.mp3", 150, "rec-x")], tracks,
+                {"A/1.mp3": "rec-1", "A/2.mp3": "rec-2", "A/3.mp3": "rec-3"})
+    p = retag.plan(conn, lib, "A/")
+    assert retag.blocking(p, strict=False) and all("length" in x for x in retag.blocking(p, strict=False))
+
+
+def test_a_plan_with_only_stays_is_not_applied(setup):
+    conn, build = setup
+    tracks = [track(1, "A", 100), track(2, "B", 200)]
+    lib = build([("A/1.mp3", 100, "rec-1"), ("A/2.mp3", 200, "rec-from-elsewhere")], tracks,
+                {"A/1.mp3": "rec-1", "A/2.mp3": "rec-2"})
+    p = retag.plan(conn, lib, "A/")
+    assert p["changes"] == [] and retag.blocking(p, strict=False) == p["problems"]
