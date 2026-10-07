@@ -42,6 +42,8 @@ approved without asking.
    approve, `uv run musiclib import --redo <album_key> --release <MBID> --reason "..." --by agent`
    (dry run first, then `--apply`). If no release fits (track splits match no edition), use
    `--asis` instead of `--release` to send it to Unsorted/ (D40).
+   Other discs of an album already imported (merge refuses it): `--redo <album_key> --add <disc keys>`
+   joins them and re-imports the whole album (D41).
 7. Offer the next batch.
 
 ## Judgment

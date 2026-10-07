@@ -75,10 +75,10 @@ def cmd_import(cfg: config.Config, args) -> None:
                                    track=args.track, apply=args.apply))
             return
         if args.redo:
-            if not args.reason or bool(args.release) == args.asis:
-                raise SystemExit("--redo needs --reason and either --release or --asis")
+            if not args.reason or args.release and args.asis or not (args.release or args.asis or args.add):
+                raise SystemExit("--redo needs --reason and either --release, --asis or --add")
             _emit(importer.redo(conn, cfg.source_dir, cfg.state_dir / "staging", args.redo, args.release,
-                                args.reason, args.by, asis=args.asis, apply=args.apply))
+                                args.reason, args.by, asis=args.asis, add=args.add or (), apply=args.apply))
             return
         if args.repair_extras:
             _emit(importer.repair_extras(conn, cfg.source_dir, apply=args.apply))
@@ -243,6 +243,8 @@ def main(argv: list[str] | None = None) -> None:
     imp.add_argument("--release", help="with --redo: the MusicBrainz release id to import it on")
     imp.add_argument("--asis", action="store_true",
                      help="with --redo: send it to Unsorted/ as the dump has it instead (D40)")
+    imp.add_argument("--add", nargs="+", metavar="ALBUM",
+                     help="with --redo: queue entries of other discs to join the imported album first (D41)")
     imp.add_argument("--reason", help="why (required with --remove, --restore and --redo)")
     imp.add_argument("--by", choices=["agent", "user"], default="user", help="who decided (with --remove)")
     imp.add_argument("--repair-extras", action="store_true",

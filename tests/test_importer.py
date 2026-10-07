@@ -598,3 +598,61 @@ def test_redo_asis_sends_an_imported_album_to_unsorted(env, monkeypatch):
     with pytest.raises(SystemExit, match="not an imported, matched album"):
         importer.redo(conn, cfg.source_dir, staging, key, None, "again", "agent", asis=True)
     assert _snapshot(cfg.source_dir) == before                 # safety rules 1 and 2
+
+
+def test_redo_add_joins_another_disc_to_an_imported_album(env, monkeypatch):
+    """D41, Junta: disc 1 was imported alone; disc 2 joins it and the album is imported again."""
+    cfg, conn, importer = env
+    from beets.autotag import AlbumInfo, AlbumMatch, TrackInfo
+    from beets.autotag.distance import Distance
+    from beets.autotag.match import Proposal, Recommendation
+    import beets.importer.tasks as tasks
+
+    disc2 = cfg.source_dir / "Some Band - Demo Disc 2"
+    disc2.mkdir()
+    _tone(disc2 / "01 Song 4.mp3")
+    conn.execute("INSERT INTO matches (album_key, dirs, files, action, decision, matched_at) VALUES "
+                 "('Some Band - Demo Disc 2/', ?, ?, 'review', 'skip', 'now')",
+                 (json.dumps(["Some Band - Demo Disc 2/"]), json.dumps(["Some Band - Demo Disc 2/01 Song 4.mp3"])))
+    tracks = [TrackInfo(title=f"Track {i}", track_id=f"rel-rec-{i}", index=i, medium=1 if i < 4 else 2,
+                        medium_index=i if i < 4 else 1, medium_total=3 if i < 4 else 1, length=2.0)
+              for i in (1, 2, 3, 4)]
+    info = AlbumInfo(tracks=tracks, album="Double Album", album_id="rel-1", artist="Real Band",
+                     artist_id="art-1", year=1999, mediums=2)
+
+    def fake_tag_album(items, search_ids=()):
+        items = sorted(items, key=lambda it: it.path)
+        m = AlbumMatch(Distance(), info, dict(zip(items, info.tracks)), [], info.tracks[len(items):])
+        return "Some Band", "Demo", Proposal([m], Recommendation.medium)
+
+    monkeypatch.setattr(tasks.autotag, "tag_album", fake_tag_album)
+    conn.execute("UPDATE matches SET action = 'review', decision = 'approve', decided_album_id = 'rel-1', "
+                 "decided_by = 'agent' WHERE album_key = 'Some Band - Demo/'")
+    conn.commit()
+    before = _snapshot(cfg.source_dir)
+    staging, key = cfg.state_dir / "staging", "Some Band - Demo/"
+    importer.run(conn, cfg.source_dir, staging, "approved", progress=io.StringIO())
+    album_dir = cfg.library_dir / "Real Band" / "1999 - Double Album"
+    assert len(list(importer.open_library().items())) == 3
+
+    with pytest.raises(SystemExit, match="not a queue entry"):
+        importer.redo(conn, cfg.source_dir, staging, key, None, "r", "agent", add=["Nope/"])
+    with pytest.raises(SystemExit, match="exactly one"):
+        importer.redo(conn, cfg.source_dir, staging, key, "rel-1", "r", "agent", asis=True, add=["x"])
+    dry = importer.redo(conn, cfg.source_dir, staging, key, None, "disc 2 found", "agent",
+                        add=["Some Band - Demo Disc 2/"])
+    assert dry["dry_run"] and dry["to_release"] == "rel-1" and dry["files"] == 4 and len(dry["remove"]) == 3
+    assert conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0] == 2
+
+    out = importer.redo(conn, cfg.source_dir, staging, key, None, "disc 2 found", "agent",
+                        add=["Some Band - Demo Disc 2/"], apply=True, progress=io.StringIO())
+    assert out["status"] == "imported" and out["removed"] == 3
+    assert {i.mb_trackid for i in importer.open_library().items()} == {f"rel-rec-{i}" for i in (1, 2, 3, 4)}
+    assert {p.name for p in album_dir.rglob("*.mp3")} | {p.name for p in album_dir.rglob("*.flac")} \
+        and len(set(importer.current_paths(conn).values())) == 4
+    rows = conn.execute("SELECT album_key, decision, decided_album_id, files FROM matches").fetchall()
+    assert [(r[0], r[1], r[2], len(json.loads(r[3]))) for r in rows] == [(key, "approve", "rel-1", 4)]
+    assert conn.execute("SELECT COUNT(*) FROM audit_log WHERE action = 'merge_albums'").fetchone()[0] == 1
+    with pytest.raises(SystemExit, match="not a queue entry"):  # an album cannot be added to itself
+        importer.redo(conn, cfg.source_dir, staging, key, None, "again", "agent", add=[key])
+    assert _snapshot(cfg.source_dir) == before                 # safety rules 1 and 2

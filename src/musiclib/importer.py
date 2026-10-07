@@ -657,24 +657,39 @@ def restore(conn: sqlite3.Connection, source: Path, rel: str, reason: str, decid
 
 
 def redo(conn: sqlite3.Connection, source: Path, staging_root: Path, album_key: str, release: str | None,
-         reason: str, decided_by: str, *, asis: bool = False, apply: bool = False,
+         reason: str, decided_by: str, *, asis: bool = False, add: list[str] = (), apply: bool = False,
          progress=sys.stderr) -> dict:
     """Re-import an imported album on another release (an approval later found wrong): remove
     every file it has in the library (logged), re-pin the decision and import it again from
     the dump (read-only). With `asis` (D40) it goes to Unsorted/ as the dump has it instead.
-    Dry run unless `apply`."""
-    if asis == bool(release):
-        raise SystemExit("redo needs exactly one of a release or asis")
-    m = conn.execute("""SELECT m.id, m.files, i.album_id FROM matches m
+    `add` (D41) names queue entries of further folders (other discs) to join it first; the
+    release then defaults to the current one. Dry run unless `apply`."""
+    if asis and release or not (asis or release or add):
+        raise SystemExit("redo needs exactly one of a release or asis (or --add to keep the release)")
+    m = conn.execute("""SELECT m.id, m.files, m.dirs, i.album_id FROM matches m
         JOIN imports i ON i.match_id = m.id AND i.status = 'imported' AND i.mode = 'apply'
         WHERE m.album_key = ?""", (album_key,)).fetchone()
     if m is None:
         raise SystemExit(f"{album_key} is not an imported, matched album")
-    if release == m["album_id"]:
+    if release == m["album_id"] and not add:
         raise SystemExit(f"{album_key} is already on release {release}")
+    release = None if asis else (release or m["album_id"])
+    extra = []
+    for k in add:
+        r = conn.execute("""SELECT m.id, m.files, m.dirs, i.status AS imported FROM matches m LEFT JOIN imports i
+            ON i.match_id = m.id AND i.status = 'imported' WHERE m.album_key = ?""", (k,)).fetchone()
+        if r is None or k == album_key:
+            raise SystemExit(f"{k}: not a queue entry that can be added")
+        if r["imported"]:
+            raise SystemExit(f"{k}: already imported; it cannot be added (D41)")
+        extra.append((k, r))
+    files = sorted({f for _, r in [(None, m)] + extra for f in json.loads(r["files"])})
+    dirs = [d for _, r in [(None, m)] + extra for d in json.loads(r["dirs"])]
     placed = current_paths(conn, json.loads(m["files"]))
     plan_ = {"album_key": album_key, "from_release": m["album_id"], "to_release": "asis" if asis else release,
              "remove": sorted(placed.values())}
+    if add:
+        plan_ |= {"add": list(add), "files": len(files)}
     if not apply:
         return {"dry_run": True, **plan_}
     why = (f"redo as-is (was {m['album_id']}): {reason}" if asis
@@ -682,6 +697,14 @@ def redo(conn: sqlite3.Connection, source: Path, staging_root: Path, album_key: 
     for dest in plan_["remove"]:
         if Path(dest).exists():
             remove_from_library(conn, dest, why, decided_by)
+    if extra:  # D41: the other discs join this album's match row and leave the queue
+        conn.execute("UPDATE matches SET files = ?, dirs = ? WHERE id = ?",
+                     (json.dumps(files), json.dumps(dirs), m["id"]))
+        conn.executemany("DELETE FROM matches WHERE id = ?", [(r["id"],) for _, r in extra])
+        conn.execute("INSERT INTO audit_log (ts, action, source_path, reason, decided_by) "
+                     "VALUES (?, 'merge_albums', ?, ?, ?)",
+                     (now(), album_key, f"added to the imported album (D41): {' + '.join(add)}: {reason}",
+                      decided_by))
     conn.execute("UPDATE matches SET decision = ?, decided_album_id = ?, decided_by = ? WHERE id = ?",
                  ("asis" if asis else "approve", release, decided_by, m["id"]))
     conn.execute("DELETE FROM imports WHERE match_id = ?", (m["id"],))
