@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-10-02 (doc rev 82)
+Last synced: 2026-10-12 (doc rev 86)
 -->
 
 # Music Library Agent — Spec
@@ -97,10 +97,13 @@ flowchart LR
 
 ### 3. Periodic audit
 
-- `beet mbsync`: pull MusicBrainz corrections.
-- `beet bad`: find corrupt or truncated files.
-- `beet missing`: list incomplete albums.
-- Report files missing cover art or MusicBrainz IDs.
+Run `/audit` (D39). `musiclib audit` is read-only; only approved MusicBrainz corrections change the library.
+
+- `audit check` (about 10 s): beets, the files on disk and the audit log agree; library files unchanged since beets wrote them; dump and inbox archive unchanged; incomplete albums; missing art. Writes `state/reports/audit-<date>.json`.
+- `audit decode` (`beet bad`): decodes every library file once, then only new or changed ones. About 35 min for the whole library, resumable.
+- `audit mbsync`: what MusicBrainz would change, per album and field, never applied. About 1 s per album, resumable.
+- `audit apply`: mbsync on the albums you approve, every moved file logged.
+- `audit relink`: adds the missing audit rows for files beets moved without one.
 
 ## Duplicates and keeper policy
 
@@ -261,6 +264,7 @@ Every design decision is recorded here, newest first. To reverse one, mark it Su
 | --- | --- | --- | --- | --- |
 | D41 | 2026-10-07 | musiclib import --redo ALBUM_KEY --add FOLDER... --reason "..." [--release MBID] adds the queue entries of further dump folders (other discs of the same release) to an imported album and imports it again as one: the album's library files are removed (each logged), the folders' files join its match row, the added rows leave the queue, and the album is re-imported on its current release (or on --release). Added folders must not be imported themselves; a skip decision on them is overridden. Dry run by default, --apply to act; only with the user's approval. | merge refuses an album once one of its folders is imported, so discs found later stayed out: Phish, Junta (disc 1 imported, disc 2 skipped) and Bastard Noise, Our Earth's Blood IV (CD3 imported, CD4 and CD5 skipped). Importing them separately would make several partial copies of one release. | Accepted |
 | D40 | 2026-10-05 | musiclib import --redo ALBUM_KEY --asis --reason "..." sends an imported album to Unsorted instead of another release: it removes the album's library files (each logged), records the decision as asis, and copies the dump folder to Unsorted/<dump folder>/ with names and tags untouched (D13). Dry run by default, --apply to act; only with the user's approval, like --redo on a release. | Arthur Brown's Kingdom Come, Galactic Zoo Dossier was approved on the 2003 CD, but the dump's track splits match none of the 8 MusicBrainz editions (intro cut from Internal Messenger, Creep 248 s vs 46 s, merged tracks), so beets put most files one track off. It should have gone as-is, but --redo needs a release and review decide refuses imported albums, so there was no way back short of removing files by hand. | Accepted |
+| D39 | 2026-10-03 | Periodic audit (M6): musiclib audit is read-only and writes state/reports/audit-<date>.json. It checks library integrity (beets items, files on disk and the audit log agree; library files unchanged since import; dump and inbox archive unchanged), damaged files, incomplete albums, missing art, and MusicBrainz drift (what mbsync would change, per album and field). mbsync changes are applied only in batches you approve through /audit, and logged. The decode check is incremental: each run decodes files not yet checked or changed since, checkpointed in the state DB and resumable with --limit. The unattended runner (watcher or cron, Agent SDK) comes later, once the audit has run by hand. | mbsync rewrites tags and can rename folders, so it is a library change like any other (rules 4 and 7). Decoding all 48,470 library tracks (about 490 GB) takes hours, so it has to run in pieces. An unattended runner should build on checks that have already been proven by hand. | Accepted |
 | D38 | 2026-10-02 | Ingest dedupe (D30) also compares an inbox folder with every library folder of the same artist and album name, however few tracks AcoustID links. A track counts as the same recording when AcoustID agrees, fingerprints score 0.75 or more (D34), or title and length (within 3 s) agree. At 90% (D14) the usual skip/upgrade/extra_tracks/edition outcomes apply; below that the folder goes to review as an edition of that library folder, never to auto-import. | Three remasters slipped into the library beside older copies (ingest 2026-10-02): AcoustID linked 2 of 7 tracks of Steely Dan's Gaucho, 2 of 8 of Countdown to Ecstasy and 10 of 13 of the Moody Blues' On the Threshold of a Dream, under D34's 50% gate or D14's 90%. Replayed on that day's 115 batches: all three go to review (Gaucho 7/7 but tagged as another release; Threshold 11/13; Countdown 4/8, its other 4 tracks 3-10 s longer at similarity 0.58-0.67, another master), plus a fourth missed copy, Wonderwall Music (9 of 27). No other batch changed. | Accepted |
 | D37 | 2026-10-01 | When a file's fingerprint names several tracks of its release, musiclib retag settles on the one whose length is within 3 s of the file, provided every other candidate is more than 6 s off. Otherwise it stays a problem ("N candidate tracks") and the file is left where it is. Applies to manual retag and to D23's relabel after import alike. | Joe Meek, I Hear a New World: AcoustID ties The Bublight's audio (163 s) to The Bublight (163 s) and Love Dance of the Saroos (154 s). retag fixed the other swaps but left The Bublight on track 2, so applying would have put two files on one track and none on track 4. The 6 s margin is twice the 3 s within which retag already treats two tracks' lengths as equal; D35's 10 s would have missed this case (9 s). | Accepted |
 | D36 | 2026-10-01 | musiclib retag --album --apply (by hand) applies a plan's clean changes when its only problems are files whose fingerprint names another recording but that stay where they are: nothing claims or fills their tracks, and they are listed in the result as left alone. Any other problem still blocks the album. D23's automatic relabel after import stays strict: any problem blocks it. | Sir Coxsone Sound, King of the Dub Rock: tracks 1, 4 and 5 hold each other's audio (a clean rotation), but two other files were flagged only because the release has no lengths and AcoustID spells the titles differently (Coxsone vs Coxson). Leaving those two alone changes nothing about them, yet they blocked the fix. | Accepted |
@@ -311,4 +315,4 @@ Milestone 1 is read-only and starts once the dump path is known. Each later mile
 | M3 | Import | beets config, `musiclib import` (dry run, then apply), quarantine and manifest | Done |
 | M4 | Review agent | CLAUDE.md, `/dedupe` and `/review` skills, batch approval flow | In progress |
 | M5 | Ingestion | `inbox/` pipeline and `/ingest` skill, with dedupe against the existing library | Done |
-| M6 | Audit + unattended | `/audit`; optional Agent SDK runner triggered by a watcher or cron | Not started |
+| M6 | Audit + unattended | `/audit`; optional Agent SDK runner triggered by a watcher or cron | In progress |

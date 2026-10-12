@@ -2,21 +2,16 @@
 non-Latin script, so English aliases (import.languages: [en]) apply. Library only.
 
 beets moves the album's items; files musiclib placed itself (D20 extras) aren't beets items,
-so they're moved along to the album's new folder here and logged.
+so they're moved along to the album's new folder here. Every moved file is logged (D39).
 """
 
 import os
-import shutil
 import sqlite3
 import unicodedata
-from datetime import datetime, timezone
 from pathlib import Path
 
+from .audit import log_relocate, move_leftovers
 from .importer import current_paths, open_library
-
-
-def now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def non_latin(text: str | None) -> bool:
@@ -46,10 +41,11 @@ def run(conn: sqlite3.Connection, *, apply: bool = False, limit: int | None = No
         return {"dry_run": True, "albums": len(albums),
                 "examples": [f"{a.albumartist} - {a.album}" for a in albums[:15]]}
     plugin = MBSyncPlugin()
-    changed = moved_extras = 0
+    changed = moved_extras = moved_items = 0
     for album in albums:
         items = list(album.items())
-        old_dir = Path(os.fsdecode(items[0].path)).parent
+        old = {i.id: os.fsdecode(i.path) for i in items}
+        old_dir = Path(old[items[0].id]).parent
         before = album.albumartist
         plugin.albums(lib, [f"id:{album.id}"], move=True, pretend=False, write=True)
         album.load()
@@ -57,25 +53,14 @@ def run(conn: sqlite3.Connection, *, apply: bool = False, limit: int | None = No
         new_dir = Path(os.fsdecode(items[0].path)).parent
         if album.albumartist != before:
             changed += 1
-        if new_dir != old_dir and old_dir.exists():
-            where = {d: s for s, d in current_paths(conn).items()}
-            for f in sorted(old_dir.iterdir()):
-                if not f.is_file():
-                    continue
-                dest = new_dir / f.name
-                if dest.exists():
-                    continue
-                shutil.move(str(f), dest)
-                if str(f) in where:  # a file musiclib placed: keep the mapping current
-                    conn.execute("INSERT INTO audit_log (ts, action, source_path, dest_path, reason, decided_by) "
-                                 "VALUES (?, 'relocate', ?, ?, ?, 'user')",
-                                 (now(), where[str(f)], str(dest), f"D25: album folder renamed ('{before}' -> "
-                                                                     f"'{album.albumartist}')"))
-                    moved_extras += 1
-            try:
-                old_dir.rmdir()
-                old_dir.parent.rmdir()  # artist folder, if now empty
-            except OSError:
-                pass
+        why = f"D25: album folder renamed ('{before}' -> '{album.albumartist}')"
+        where = {d: s for s, d in current_paths(conn).items()}
+        for item in items:
+            new = os.fsdecode(item.path)
+            if new != old[item.id] and old[item.id] in where:
+                log_relocate(conn, where[old[item.id]], new, why, "user")
+                moved_items += 1
+        moved_extras += move_leftovers(conn, old_dir, new_dir, why, "user")
         conn.commit()
-    return {"albums": len(albums), "artist_changed": changed, "extras_moved": moved_extras}
+    return {"albums": len(albums), "artist_changed": changed, "items_moved": moved_items,
+            "extras_moved": moved_extras}

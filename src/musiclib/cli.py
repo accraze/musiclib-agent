@@ -177,6 +177,42 @@ def cmd_ingest(cfg: config.Config, args) -> None:
             _emit(ingest.upgrades(conn, cfg, args.batch, apply=args.apply, decided_by=args.by))
 
 
+def cmd_audit(cfg: config.Config, args) -> None:
+    from . import beetsenv
+    beetsenv.setup(cfg)
+    from . import audit, importer
+
+    conn = db.connect(cfg.db_path)
+    importer.migrate(conn)
+    audit.migrate(conn)
+    lib = importer.open_library()
+    cmd = args.audit_cmd
+    if cmd == "check":
+        with importer.library_lock(cfg.state_dir):  # a consistent snapshot, not a half-done import
+            rep = audit.check(conn, lib, cfg.library_dir, cfg.source_dir, accept_modified=args.accept_modified)
+        cfg.reports_dir.mkdir(parents=True, exist_ok=True)
+        out = cfg.reports_dir / f"audit-{report_date()}.json"
+        out.write_text(json.dumps(rep, indent=1, ensure_ascii=False, default=str))
+        _emit({**audit.summary(rep), "written": str(out)})
+    elif cmd == "decode":
+        _emit(audit.run_decode(conn, lib, cfg.library_dir, limit=args.limit, workers=args.workers))
+    elif cmd == "mbsync":
+        _emit(audit.run_mbsync(conn, lib, limit=args.limit))
+    elif cmd == "list":
+        _emit(audit.mbsync_findings(conn, limit=args.limit))
+    elif cmd == "show":
+        _emit(audit.mbsync_detail(conn, args.album_id))
+    elif cmd == "apply":
+        if not args.apply:
+            _emit({"dry_run": True, "albums": [audit.mbsync_detail(conn, a) for a in args.albums]})
+            return
+        with importer.library_lock(cfg.state_dir):
+            _emit(audit.apply_mbsync(conn, lib, args.albums, args.reason, args.by))
+    elif cmd == "relink":
+        with importer.library_lock(cfg.state_dir) if args.apply else contextlib.nullcontext():
+            _emit(audit.relink(conn, lib, cfg.library_dir, args.by, apply=args.apply))
+
+
 def cmd_report(cfg: config.Config, args) -> None:
     conn = db.connect(cfg.db_path)
     if args.not_imported:
@@ -317,6 +353,30 @@ def main(argv: list[str] | None = None) -> None:
     ir = isub.add_parser("report", help="batch manifest: every file and where it went (state/reports/)")
     ir.add_argument("--batch", required=True)
     ing.set_defaults(func=cmd_ingest)
+
+    au = sub.add_parser("audit", help="M6 periodic audit (D39): read-only checks; mbsync applied only on approval")
+    asub = au.add_subparsers(dest="audit_cmd", required=True)
+    ac = asub.add_parser("check", help="integrity, originals, incomplete albums, art; writes state/reports/audit-<date>.json")
+    ac.add_argument("--accept-modified", action="store_true",
+                    help="take files flagged as modified as they are now (after the user has looked)")
+    ad = asub.add_parser("decode", help="decode library files not checked yet or changed since (resumable)")
+    ad.add_argument("--limit", type=int)
+    ad.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2))
+    am = asub.add_parser("mbsync", help="dry run: what MusicBrainz would change, per album (resumable)")
+    am.add_argument("--limit", type=int)
+    al = asub.add_parser("list", help="albums with pending MusicBrainz changes")
+    al.add_argument("--limit", type=int, default=20)
+    ash = asub.add_parser("show", help="one album's pending MusicBrainz changes, per track")
+    ash.add_argument("album_id", type=int, help="beets album id")
+    aa = asub.add_parser("apply", help="mbsync approved albums (dry run without --apply)")
+    aa.add_argument("--albums", type=int, nargs="+", required=True, help="beets album ids")
+    aa.add_argument("--reason", required=True)
+    aa.add_argument("--by", choices=["agent", "user"], default="agent")
+    aa.add_argument("--apply", action="store_true")
+    arl = asub.add_parser("relink", help="log library files beets moved without an audit row (dry run without --apply)")
+    arl.add_argument("--by", choices=["agent", "user"], default="agent")
+    arl.add_argument("--apply", action="store_true")
+    au.set_defaults(func=cmd_audit)
 
     rep = sub.add_parser("report", help="summarize the inventory as JSON")
     rep.add_argument("--top", type=int, default=10, help="examples per section")
