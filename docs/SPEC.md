@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-10-12 (doc rev 86)
+Last synced: 2026-10-12 (doc rev 90)
 -->
 
 # Music Library Agent — Spec
@@ -40,12 +40,12 @@ flowchart TD
   C --> F[MusicBrainz + AcoustID]
 ```
 
-The agent never touches files directly. It calls `musiclib` subcommands, and each subcommand supports `--dry-run`.
+The agent never touches files directly. It calls `musiclib` subcommands; every mutating subcommand prints its plan by default and changes nothing without `--apply`.
 
 | Layer | Responsibility | Tech |
 | --- | --- | --- |
 | Agent | Resolve the review queue, pick duplicate keepers, explain decisions | Claude Code with CLAUDE.md and skills (`/ingest`, `/dedupe`, `/audit`) |
-| musiclib CLI | Inventory, duplicate grouping, match candidates, apply, quarantine, report | Python 3.12, managed with `uv` |
+| musiclib CLI | Inventory, duplicate grouping, match candidates, apply, not-imported report | Python 3.12, managed with `uv` |
 | Engine | Tagging, fingerprinting, file moves, art | beets, Chromaprint (`fpcalc`), `ffprobe` |
 | State | File inventory, hashes, fingerprints, review items, audit log | SQLite |
 
@@ -85,8 +85,8 @@ flowchart LR
 3. **Verify tags:** where a file already has a MusicBrainz recording ID, compare it with the AcoustID lookup. Flag mismatches.
 4. **Auto-import:** run `beet import` on the keepers. Matches above the threshold land in the library.
 5. **Review:** the agent works through the queue using folder names, tags, fingerprints and MusicBrainz searches. It proposes a match, `as-is` or skip.
-6. **Quarantine:** move the non-keepers out, with a manifest.
-7. **Report:** totals, duplicates found, space reclaimed, and what is still unresolved.
+6. **Not imported:** non-keepers stay in the dump, untouched, and are listed with reasons in the not-imported report (D18).
+7. **Report:** totals, duplicates found, and what is still unresolved.
 
 ### 2. Ingestion (new folders)
 
@@ -111,7 +111,7 @@ Duplicates are detected at three tiers, from certain to fuzzy. Tiers 1 and 2 can
 
 | Tier | What matches | Detected by | Resolution |
 | --- | --- | --- | --- |
-| 1. Identical file | Same bytes | SHA-256 | Auto: keep one, quarantine the rest |
+| 1. Identical file | Same bytes | SHA-256 | Auto: import one; the rest are listed as not imported (D18) |
 | 2. Same recording | Same audio, different encode or tags | AcoustID or MusicBrainz recording ID; Chromaprint similarity | Auto by keeper ranking |
 | 3. Same release, different edition | Remaster, deluxe, regional pressing | MusicBrainz release group | Review: may be intentional |
 
@@ -245,7 +245,7 @@ The first inbox run on 2026-09-30 added 22 albums (284 files, all fingerprint-co
 
 ## Open questions
 
-These need an answer before Milestone 2 (import). Milestone 1 (inventory) needs only the dump path.
+All of these are answered; they stay here for the record.
 
 - [x] Clean library: /srv/data/media/music-library (the dump stays at /srv/data/media/music).
 - [x] Dump size: 633.6 GB, about 58,550 audio files. A 500-file trial ran at about 1.1 GB/s, so the full inventory takes about 10 minutes and no overnight batch is needed.

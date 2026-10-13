@@ -14,7 +14,7 @@ An agent that manages a personal music library: organize, MusicBrainz-tag and de
 
 - The source dump is read-only: never write tags to, move or delete files in it.
 - Import by copying into the separate library root; never move.
-- Losing duplicates go to `quarantine/<date>/` with a manifest; never delete files.
+- Never delete files. Losing duplicates are not imported; they stay in the dump and are listed in the not-imported report (D18).
 - Every mutating command defaults to a dry run and needs `--apply`.
 - Every change is recorded in the audit log.
 
