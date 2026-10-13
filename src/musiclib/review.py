@@ -140,6 +140,61 @@ def listing(conn: sqlite3.Connection, kind: str, limit: int = 20, offset: int = 
     return {"kind": kind, "remaining": total, "offset": offset, "albums": albums}
 
 
+def dupe_groups(conn: sqlite3.Connection, limit: int = 10, offset: int = 0) -> dict:
+    """The `dupe` queue seen as duplicate groups (/dedupe): each folder-level review group with
+    an open album, every member's audio stats, match and status (open, decided or imported).
+    Read-only; decisions are recorded per album with decide()."""
+    _ensure(conn)
+    open_sql = f"""SELECT DISTINCT dg.id FROM dupe_groups dg JOIN dupe_members dm ON dm.group_id = dg.id
+        JOIN matches m ON EXISTS (SELECT 1 FROM json_each(m.dirs) d WHERE d.value = dm.path)
+        WHERE dg.scope = 'folder' AND dg.action = 'review' AND m.decision IS NULL AND ({KIND_SQL['dupe']})"""
+    total = conn.execute(f"SELECT COUNT(*) FROM ({open_sql})").fetchone()[0]
+    ids = [r[0] for r in conn.execute(
+        f"SELECT dg.id FROM dupe_groups dg WHERE dg.id IN ({open_sql}) ORDER BY dg.tier, dg.id LIMIT ? OFFSET ?",
+        (limit, offset))]
+    groups = []
+    for gid in ids:
+        g = conn.execute("SELECT * FROM dupe_groups WHERE id = ?", (gid,)).fetchone()
+        members = []
+        for dm in conn.execute("SELECT * FROM dupe_members WHERE group_id = ? ORDER BY role DESC, path", (gid,)):
+            m = conn.execute("""SELECT m.*, i.status AS imported, i.library_dir FROM matches m
+                LEFT JOIN imports i ON i.match_id = m.id AND i.status = 'imported'
+                WHERE EXISTS (SELECT 1 FROM json_each(m.dirs) d WHERE d.value = ?)""", (dm["path"],)).fetchone()
+            member = {"folder": dm["path"], "role": dm["role"], "coverage": dm["coverage"],
+                      "stats": json.loads(dm["stats"] or "{}")}
+            if m is None:
+                member["status"] = "no match row"
+            else:
+                cands = json.loads(m["candidates"] or "[]")
+                member.update(
+                    album_key=m["album_key"],
+                    status=("imported" if m["imported"] else f"decided: {m['decision']}" if m["decision"]
+                            else "open" if m["action"] == "review" else m["action"]),
+                    library_dir=m["library_dir"],
+                    local={k: v for k, v in _local(conn, json.loads(m["files"])).items() if k != "sample"},
+                    best=cands[0] if cands else None)
+                member["_files"] = json.loads(m["files"])
+            members.append(member)
+        # Tracks only this copy has (by AcoustID): what dropping it would lose.
+        ids = [_file_audio(conn, mb.pop("_files", [])) for mb in members]
+        for i, mb in enumerate(members):
+            others = set().union(*(set(x.values()) for j, x in enumerate(ids) if j != i))
+            mb["only_here"] = sorted(f.rsplit("/", 1)[-1] for f, a in ids[i].items() if a not in others)[:15]
+        groups.append({"group": gid, "tier": g["tier"], "reason": g["reason"], "keeper": g["keeper"],
+                       "carry_tags_from": g["carry_tags_from"], "members": members})
+    return {"remaining_groups": total, "offset": offset, "groups": groups}
+
+
+def _file_audio(conn: sqlite3.Connection, files: list[str]) -> dict[str, str]:
+    """file -> AcoustID id, for the files AcoustID identified."""
+    if not files:
+        return {}
+    marks = ",".join("?" * len(files))
+    return {r[0]: r[1] for r in conn.execute(f"""SELECT f.path, a.acoustid_id FROM files f JOIN acoustid_lookups a
+        ON a.fingerprint = f.fingerprint AND a.fp_duration = f.fp_duration
+        WHERE f.path IN ({marks}) AND a.acoustid_id IS NOT NULL""", files)}
+
+
 def _audio(conn: sqlite3.Connection, files: list[str]) -> set[str]:
     marks = ",".join("?" * len(files))
     return {r[0] for r in conn.execute(f"""SELECT a.acoustid_id FROM files f JOIN acoustid_lookups a

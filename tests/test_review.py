@@ -202,3 +202,31 @@ def test_auto_on_weak_uses_the_close_call_rules(conn):
 ])
 def test_version_mismatch(local, key, cand_album, flag):
     assert review.version_mismatch(local, key, cand_album) == flag
+
+
+def test_dupe_groups_show_every_copy_and_its_status(conn):
+    from musiclib import acoustid, dupes
+    acoustid.migrate(conn)
+    conn.executescript(dupes.SCHEMA)
+    conn.execute("UPDATE matches SET dirs = '[\"Close/\"]', files = '[\"Close/1.mp3\"]' WHERE album_key = 'Close/'")
+    conn.execute("UPDATE matches SET dirs = '[\"Auto/\"]', files = '[\"Auto/1.mp3\", \"Auto/2.mp3\"]' "
+                 "WHERE album_key = 'Auto/'")
+    for path, fp, aid in [("Close/1.mp3", "f1", "a1"), ("Auto/1.mp3", "f1", "a1"), ("Auto/2.mp3", "f2", "a2")]:
+        conn.execute("INSERT INTO files (path, top_dir, ext, size, mtime, scanned_at, fingerprint, fp_duration) "
+                     "VALUES (?, '', 'mp3', 1, 1, 'now', ?, 100)",
+                     (path, fp))
+        conn.execute("INSERT OR IGNORE INTO acoustid_lookups (fingerprint, fp_duration, status, looked_up_at, "
+                     "acoustid_id) "
+                     "VALUES (?, 100, 'ok', 'now', ?)", (fp, aid))
+    gid = conn.execute("INSERT INTO dupe_groups (tier, scope, action, reason, keeper, reclaimable) "
+                       "VALUES (3, 'folder', 'review', 'editions', 'Auto/', 1)").lastrowid
+    conn.executemany("INSERT INTO dupe_members (group_id, path, role, stats) VALUES (?, ?, ?, '{}')",
+                     [(gid, "Auto/", "keep"), (gid, "Close/", "drop")])
+    conn.commit()
+    out = review.dupe_groups(conn)
+    assert out["remaining_groups"] == 1
+    members = {m["folder"]: m for m in out["groups"][0]["members"]}
+    assert members["Close/"]["status"] == "open" and members["Auto/"]["status"] == "auto"
+    assert members["Auto/"]["only_here"] == ["2.mp3"] and members["Close/"]["only_here"] == []
+    review.decide(conn, [{"album_key": "Close/", "decision": "skip", "reason": "worse copy"}], "agent")
+    assert review.dupe_groups(conn)["remaining_groups"] == 0

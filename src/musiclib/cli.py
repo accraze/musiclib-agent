@@ -98,6 +98,8 @@ def cmd_review(cfg: config.Config, args) -> None:
         _emit(review.stats(conn))
     elif args.review_cmd == "list":
         _emit(review.listing(conn, args.kind, args.limit, args.offset))
+    elif args.review_cmd == "dupes":
+        _emit(review.dupe_groups(conn, args.limit, args.offset))
     elif args.review_cmd == "auto":
         _emit(review.auto_approve(conn, kind=args.kind, limit=args.limit, apply=args.apply))
     else:
@@ -296,6 +298,9 @@ def main(argv: list[str] | None = None) -> None:
     rl.add_argument("--kind", choices=["close", "weak", "none", "dupe", "error"], default="close")
     rl.add_argument("--limit", type=int, default=20)
     rl.add_argument("--offset", type=int, default=0)
+    rg = rsub.add_parser("dupes", help="the dupe queue as duplicate groups, every copy side by side (/dedupe)")
+    rg.add_argument("--limit", type=int, default=10)
+    rg.add_argument("--offset", type=int, default=0)
     ra = rsub.add_parser("auto", help="standing approvals: D21/D22 (close) or D24 (none); the rest to ask")
     ra.add_argument("--kind", choices=["close", "weak", "none"], default="close")
     ra.add_argument("--limit", type=int, default=20)

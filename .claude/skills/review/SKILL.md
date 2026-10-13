@@ -16,7 +16,8 @@ approved without asking.
 ## Loop
 
 1. `uv run musiclib review stats` to see what's open. Work kinds in this order:
-   `close` → `weak` → `none` → `dupe` → `error`.
+   `close` → `weak` → `none` → `dupe` → `error`. The `dupe` kind is worked group by group with
+   the `/dedupe` skill (`.claude/skills/dedupe/`).
 2. For `close`: `uv run musiclib review auto --limit 20` (dry run) splits the batch into D21
    approvals and albums to ask about. Run it again with `--apply` to record the D21 approvals,
    import them (step 6), and report them in one line each. Then present only the `ask` rows.
