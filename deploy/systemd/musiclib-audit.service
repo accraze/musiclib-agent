@@ -1,10 +1,12 @@
-# D42: the read-only audit check (D39); writes state/reports/audit-<date>.json.
+# D42/D43: decode new library files, then the read-only audit check (D39), which writes
+# state/reports/audit-<date>.json. Both feed D43's check that a library copy is verified.
 [Unit]
-Description=musiclib nightly audit check (D39, D42)
+Description=musiclib nightly audit decode + check (D39, D42, D43)
 
 [Service]
 Type=oneshot
 WorkingDirectory=%h/src/music-agent
+ExecStart=%h/.local/bin/uv run --frozen musiclib audit decode
 ExecStart=%h/.local/bin/uv run --frozen musiclib audit check
 Nice=10
 IOSchedulingClass=idle

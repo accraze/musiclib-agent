@@ -168,6 +168,8 @@ def cmd_ingest(cfg: config.Config, args) -> None:
         _emit(ingest.dedupe(conn, args.batch))
     elif args.ingest_cmd == "report":
         _emit(ingest.manifest(conn, cfg, args.batch))
+    elif args.ingest_cmd == "prune":
+        _emit(ingest.prune(conn, cfg, apply=args.apply, days=args.days, decided_by=args.by))
     else:  # match / import / upgrades use beets
         from . import beetsenv
         beetsenv.setup(cfg)  # before anything imports beets (D9)
@@ -363,6 +365,11 @@ def main(argv: list[str] | None = None) -> None:
     iu.add_argument("--by", choices=["agent", "user"], default="user")
     ir = isub.add_parser("report", help="batch manifest: every file and where it went (state/reports/)")
     ir.add_argument("--batch", required=True)
+    ip = isub.add_parser("prune", help="D43: delete archive folders of settled batches whose library copy is "
+                                       "verified (dry run without --apply)")
+    ip.add_argument("--apply", action="store_true")
+    ip.add_argument("--days", type=int, default=30, help="settled at least this long (default 30)")
+    ip.add_argument("--by", choices=["agent", "user"], default="user")
     irn = isub.add_parser("run", help="D42 unattended pass: claim quiet folders, pipeline, strong + standing "
                                       "imports (dry run without --apply)")
     irn.add_argument("--apply", action="store_true")

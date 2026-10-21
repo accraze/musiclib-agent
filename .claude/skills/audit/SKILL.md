@@ -50,6 +50,7 @@ You drive the subcommands; you never touch files yourself. Safety rules apply (d
 
 ## Not in scope
 
-Unattended, only `audit check` runs (nightly, D42); its report is waiting in `state/reports/`
-when the user runs /audit. `decode`, `mbsync` and `apply` stay hand-run.
+Unattended, `audit decode` (new files only) and `audit check` run nightly (D42, D43); the report
+is waiting in `state/reports/` when the user runs /audit. `mbsync` and `apply` stay hand-run.
+Originals of batches pruned under D43 are not expected, so they never show as missing.
 Never run `beet` directly (D9).

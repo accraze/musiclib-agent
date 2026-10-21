@@ -23,6 +23,10 @@ Unsorted, standing approvals); what's left of its batches is in the review queue
 its upgrades wait for step 8. Read the latest `state/reports/runner-*.json` before starting, and
 don't claim by hand while a runner is going (`state/runner.lock`).
 
+The runner also prunes (D43): a batch settled for 30 days whose library copy the audit has
+verified loses its `.processed/` folder. Never delete archive folders by hand; `ingest prune`
+(dry run) shows what is due and why the rest is held.
+
 ## Loop (one folder at a time)
 
 1. `uv run musiclib ingest list`: folders waiting, loose files ignored, earlier batches.

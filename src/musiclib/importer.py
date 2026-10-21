@@ -613,6 +613,8 @@ def restore(conn: sqlite3.Connection, source: Path, rel: str, reason: str, decid
         raise SystemExit("--restore is the user's call: use --by user")
     if rel in current_paths(conn):
         raise SystemExit(f"{rel} is already in the library at {current_paths(conn)[rel]}")
+    from .ingest import refuse_pruned
+    refuse_pruned(conn, [str(source / rel)], "restore")
     if not (source / rel).is_file():
         raise SystemExit(f"{rel} is not in the dump")
     m = conn.execute("""SELECT m.album_key, m.files, i.album_id, i.library_dir FROM matches m
@@ -689,6 +691,8 @@ def redo(conn: sqlite3.Connection, source: Path, staging_root: Path, album_key: 
         extra.append((k, r))
     files = sorted({f for _, r in [(None, m)] + extra for f in json.loads(r["files"])})
     dirs = [d for _, r in [(None, m)] + extra for d in json.loads(r["dirs"])]
+    from .ingest import refuse_pruned
+    refuse_pruned(conn, [str(source / f) for f in files], f"redo {album_key}")
     placed = current_paths(conn, json.loads(m["files"]))
     plan_ = {"album_key": album_key, "from_release": m["album_id"], "to_release": "asis" if asis else release,
              "remove": sorted(placed.values())}

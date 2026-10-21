@@ -5,6 +5,7 @@
           From then on the folder is read-only, like the dump (D27), and its files are
           recorded with absolute paths (D29).
   scan    inventory + AcoustID + verify, on the batch's files only
+  prune   D43: delete a settled batch's archive folder once its library copy is verified
 
 Later steps (dedupe against the library, match, import) reuse the dump pipeline.
 """
@@ -12,6 +13,7 @@ Later steps (dedupe against the library, match, import) reuse the dump pipeline.
 import json
 import os
 import re
+import shutil
 import sqlite3
 import sys
 from collections import Counter
@@ -42,6 +44,9 @@ def now() -> str:
 
 def migrate(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    if "pruned_at" not in {r[1] for r in conn.execute("PRAGMA table_info(ingest_batches)")}:
+        conn.execute("ALTER TABLE ingest_batches ADD COLUMN pruned_at TEXT")  # D43
+        conn.commit()
 
 
 def _inbox(cfg: Config) -> Path:
@@ -657,3 +662,132 @@ def manifest(conn: sqlite3.Connection, cfg: Config, ref: str | int) -> dict:
             "flags": [dict(r) for r in conn.execute(
                 "SELECT path, other, reason FROM ingest_dupes WHERE batch_id = ? AND outcome = 'flag'", (b["id"],))],
             "written": str(out)}
+
+
+# --- Prune (D43) ---------------------------------------------------------------------------
+
+PRUNE_DAYS = 30
+
+
+def pruned_roots(conn: sqlite3.Connection) -> list[str]:
+    migrate(conn)
+    return [r[0].rstrip("/") + "/" for r in conn.execute(
+        "SELECT path FROM ingest_batches WHERE pruned_at IS NOT NULL")]
+
+
+def refuse_pruned(conn: sqlite3.Connection, paths, what: str) -> None:
+    """redo, restore and retag read originals back; a pruned batch has none (D43)."""
+    roots = pruned_roots(conn)
+    gone = sorted(p for p in paths if any(p.startswith(r) for r in roots))
+    if gone:
+        raise SystemExit(f"{what}: the original of {gone[0]} was pruned from the inbox archive (D43)"
+                         + (f", and {len(gone) - 1} more" if len(gone) > 1 else ""))
+
+
+def _last_change(conn: sqlite3.Connection, b) -> datetime:
+    """The batch's last logged change: claim, decisions, imports, removals."""
+    root = b["path"].rstrip("/") + "/"
+    ts = conn.execute("""SELECT MAX(ts) FROM audit_log WHERE substr(source_path, 1, ?) = ?
+                         OR substr(dest_path, 1, ?) = ? OR source_path = ? OR dest_path = ?""",
+                      (len(root), root, len(root), root, b["path"], b["path"])).fetchone()[0]
+    return max(datetime.fromisoformat(t) for t in (b["claimed_at"], ts) if t)
+
+
+def _verified(dest: str, baseline: dict, decoded: dict) -> str | None:
+    """Why this library file doesn't count as a verified copy yet, or None (D43 (3))."""
+    from .audit import DAMAGED
+
+    try:
+        st = os.stat(dest)
+    except FileNotFoundError:
+        return f"library copy missing: {dest}"
+    now_ = (st.st_size, st.st_mtime)
+    if baseline.get(dest) != now_:
+        return f"library copy not seen unchanged by audit check yet: {dest}"
+    d = decoded.get(dest)
+    if d is None or d[:2] != now_:
+        return f"library copy not decoded by audit decode yet: {dest}"
+    if d[2] and d[3] < DAMAGED * d[2]:
+        return f"library copy decodes short ({d[3]:.0f} of {d[2]:.0f} s): {dest}"
+    return None
+
+
+def prune_check(conn: sqlite3.Connection, b, placed: dict, baseline: dict, decoded: dict) -> list[str]:
+    """Every audio file of a settled batch is in the library (verified) or a skipped duplicate.
+    Returns the reasons it isn't (empty: prunable)."""
+    root = b["path"]
+    skip_files, skip_folders = _skipped(conn, b["id"])
+    why = []
+    for (f,) in conn.execute("SELECT path FROM files WHERE top_dir = ? ORDER BY path", (root,)):
+        if f in placed:
+            w = _verified(placed[f], baseline, decoded)
+        elif f in skip_files or _folder(f) in skip_folders:
+            w = None  # D30: the library (or this batch) has an equal or better copy
+        else:
+            last = conn.execute("SELECT action, reason FROM audit_log WHERE source_path = ? ORDER BY id DESC LIMIT 1",
+                                (f,)).fetchone()
+            w = f"not in the library ({last['action']}: {last['reason']})" if last else "not in the library"
+            w += f": {f}"
+        if w:
+            why.append(w)
+    return why
+
+
+def prune(conn: sqlite3.Connection, cfg: Config, *, apply: bool = False, days: int = PRUNE_DAYS,
+          decided_by: str = "auto", clock=None) -> dict:
+    """D43: delete the archive folder of each batch that is settled, unchanged for `days` and
+    whose every audio file has a verified library copy (or was skipped as a duplicate).
+    Dry run unless `apply`. Everything else is held, with the reasons."""
+    from . import importer
+    from .audit import migrate as audit_migrate
+
+    importer.migrate(conn)
+    audit_migrate(conn)
+    migrate(conn)
+    conn.executescript(DUPES_SCHEMA)
+    now_ = clock() if clock else datetime.now(timezone.utc)
+    placed = importer.current_paths(conn)
+    baseline = {r[0]: (r[1], r[2]) for r in conn.execute("SELECT path, size, mtime FROM audit_files")}
+    decoded = {r[0]: tuple(r[1:]) for r in conn.execute(
+        "SELECT path, size, mtime, expected, decoded FROM audit_decode")}
+    processed = cfg.processed_dir.resolve()
+    ready, held, not_due, unsettled = [], [], 0, 0
+    for b in conn.execute("SELECT * FROM ingest_batches WHERE pruned_at IS NULL ORDER BY id").fetchall():
+        if b["status"] != "imported" or b["note"]:
+            unsettled += 1
+            continue
+        age = (now_ - _last_change(conn, b)).days
+        if age < days:
+            not_due += 1
+            continue
+        root = Path(b["path"])
+        if root.is_symlink() or processed not in root.resolve().parents:
+            held.append({"batch": b["id"], "folder": b["folder"], "why": [f"not under {processed}: {root}"]})
+            continue
+        why = prune_check(conn, b, placed, baseline, decoded)
+        if why:
+            held.append({"batch": b["id"], "folder": b["folder"], "problems": len(why), "why": why[:3]})
+            continue
+        on_disk = sorted(str(p) for p in root.rglob("*") if p.is_file() or p.is_symlink()) if root.is_dir() else []
+        ready.append({"batch": b["id"], "folder": b["folder"], "path": str(root), "days": age,
+                      "files": len(on_disk), "bytes": sum(os.lstat(p).st_size for p in on_disk), "_files": on_disk})
+    out = {"days": days, "not_due": not_due, "unsettled": unsettled, "held": held}
+    public = [{k: v for k, v in r.items() if k != "_files"} for r in ready]
+    if not apply:
+        return {"dry_run": True, "would_prune": public, **out}
+    with importer.library_lock(cfg.state_dir):  # redo/restore may be reading originals
+        for r in ready:
+            reason = f"D43: batch {r['batch']} settled {r['days']} days, every file verified in the library"
+            with conn:
+                conn.executemany("INSERT INTO audit_log (ts, action, source_path, reason, decided_by) "
+                                 "VALUES (?, 'prune_original', ?, ?, ?)",
+                                 [(now(), p, reason, decided_by) for p in r["_files"]])
+                conn.execute("UPDATE ingest_batches SET pruned_at = ? WHERE id = ?", (now(), r["batch"]))
+            root = Path(r["path"])
+            if root.is_dir():
+                shutil.rmtree(root)
+            try:
+                root.parent.rmdir()  # the <date> folder, once empty
+            except OSError:
+                pass
+    return {"pruned": public, "freed_bytes": sum(r["bytes"] for r in ready), **out}

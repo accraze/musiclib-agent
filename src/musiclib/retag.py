@@ -370,6 +370,10 @@ def apply(conn: sqlite3.Connection, lib, album_key: str, decided_by: str, reason
         raise SystemExit(f"{album_key}: files must come off tracks (D35); run retag --album --apply")
     if (p["_demote"] or p["_promote"]) and source is None:
         raise SystemExit("taking files off tracks or promoting extras needs the dump (source_dir)")
+    if p["_demote"] or p["_promote"]:  # files come back from their originals
+        from .ingest import refuse_pruned
+        row = conn.execute("SELECT files FROM matches WHERE album_key = ?", (album_key,)).fetchone()
+        refuse_pruned(conn, [str(source / f) for f in json.loads(row[0])] if row else [], f"retag {album_key}")
     from .importer import place_extras
 
     album_id = next((i.album_id for i in [i for i, _, _ in p["_assign"].values()]

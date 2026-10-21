@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-10-21 (doc rev 94)
+Last synced: 2026-10-21 (doc rev 96)
 -->
 
 # Music Library Agent — Spec
@@ -25,7 +25,7 @@ The goal is a single clean, MusicBrainz-tagged, de-duplicated library built from
 
 - Playback, streaming or a UI. A media server such as Navidrome, Jellyfin or Plex can point at the finished library.
 - Recommendations or playlist generation.
-- Automatic deletion of files.
+- Automatic deletion of files, except pruning settled originals from the inbox archive (D43).
 
 ## Architecture
 
@@ -262,6 +262,7 @@ Every design decision is recorded here, newest first. To reverse one, mark it Su
 
 | # | Date | Decision | Rationale | Status |
 | --- | --- | --- | --- | --- |
+| D43 | 2026-10-21 | The inbox archive (D28) may be pruned; the dump keeps safety rule 3. musiclib ingest prune deletes a batch folder under inbox/.processed/ only when (1) the batch is settled: every album imported or skipped, no review open; (2) 30 days have passed since its last logged change; (3) every audio file in it is either in the library, unchanged since the last audit check and decoded in full by audit decode, or was skipped as a duplicate (D30). A batch with any other file (a skipped extra, a damaged file, a file removed from the library) is held and listed with the reason. Non-audio files in the folder (scans, logs, cue sheets) are deleted with it. The hourly runner (D42) prunes with --apply under the library lock; every file is logged, the batch is marked pruned, the audit stops expecting its originals, and redo, restore and retag refuse for its files. The nightly service runs audit decode (new files only) before audit check. | The archive held 101 GB on 2026-10-21, almost all originals of files now in the library, with only 1.4 GB skipped duplicates. After a month with a verified library copy, an original mostly serves recoveries that haven't been needed. Deleting by hand would break the audit and redo; a gated, logged command keeps it traceable. | Accepted |
 | D42 | 2026-10-21 | Unattended runner (M6): musiclib ingest run is a plain script with no LLM, started by a systemd user timer about once an hour. It claims every inbox folder left unchanged for 10 minutes, then scans, dedupes, matches, imports strong matches (D15) and no-candidate albums to Unsorted (D13), and applies the standing approvals D21, D22, D24 and D26 (D31), each logged as decided by auto. Everything else waits in the review queue for /review and /dedupe; upgrades (D32), editions and extra tracks are never applied unattended. A nightly timer runs the read-only audit check. Each run writes a report to state/reports/. The Agent SDK wrapper (D2) is deferred. | Every step the runner takes is already deterministic and covered by an existing approval, so an LLM adds cost without deciding anything more; judgment calls wait for you either way. The quiet period keeps half-copied folders from being claimed. | Accepted |
 | D41 | 2026-10-07 | musiclib import --redo ALBUM_KEY --add FOLDER... --reason "..." [--release MBID] adds the queue entries of further dump folders (other discs of the same release) to an imported album and imports it again as one: the album's library files are removed (each logged), the folders' files join its match row, the added rows leave the queue, and the album is re-imported on its current release (or on --release). Added folders must not be imported themselves; a skip decision on them is overridden. Dry run by default, --apply to act; only with the user's approval. | merge refuses an album once one of its folders is imported, so discs found later stayed out: Phish, Junta (disc 1 imported, disc 2 skipped) and Bastard Noise, Our Earth's Blood IV (CD3 imported, CD4 and CD5 skipped). Importing them separately would make several partial copies of one release. | Accepted |
 | D40 | 2026-10-05 | musiclib import --redo ALBUM_KEY --asis --reason "..." sends an imported album to Unsorted instead of another release: it removes the album's library files (each logged), records the decision as asis, and copies the dump folder to Unsorted/<dump folder>/ with names and tags untouched (D13). Dry run by default, --apply to act; only with the user's approval, like --redo on a release. | Arthur Brown's Kingdom Come, Galactic Zoo Dossier was approved on the 2003 CD, but the dump's track splits match none of the 8 MusicBrainz editions (intro cut from Internal Messenger, Creep 248 s vs 46 s, merged tracks), so beets put most files one track off. It should have gone as-is, but --redo needs a release and review decide refuses imported albums, so there was no way back short of removing files by hand. | Accepted |

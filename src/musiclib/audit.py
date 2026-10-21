@@ -174,9 +174,15 @@ def integrity(conn: sqlite3.Connection, lib, library_dir: Path, *, accept_modifi
 
 
 def originals(conn: sqlite3.Connection, source_dir: Path) -> dict:
-    """Dump and inbox-archive files still as inventoried (safety rule 1, D27)."""
+    """Dump and inbox-archive files still as inventoried (safety rule 1, D27). Batches pruned
+    under D43 have no originals left, so they're not expected."""
+    from .ingest import pruned_roots
+
+    roots = tuple(pruned_roots(conn))
     missing, changed, checked = [], [], 0
     for row in conn.execute("SELECT path, size, mtime FROM files"):
+        if roots and row["path"].startswith(roots):
+            continue
         p = Path(row["path"]) if row["path"].startswith("/") else source_dir / row["path"]
         checked += 1
         try:
