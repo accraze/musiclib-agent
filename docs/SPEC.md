@@ -2,7 +2,7 @@
 Synced copy of the living spec doc:
 https://claude.ai/code/artifact/100be31d-9e99-440a-8f47-25fef6b76e95
 Discussion and edits happen in the doc; re-sync this file after changes.
-Last synced: 2026-10-12 (doc rev 90)
+Last synced: 2026-10-21 (doc rev 94)
 -->
 
 # Music Library Agent — Spec
@@ -49,7 +49,7 @@ The agent never touches files directly. It calls `musiclib` subcommands; every m
 | Engine | Tagging, fingerprinting, file moves, art | beets, Chromaprint (`fpcalc`), `ffprobe` |
 | State | File inventory, hashes, fingerprints, review items, audit log | SQLite |
 
-**Harness:** Claude Code comes first, for interactive use with no agent-loop code to maintain. When ingestion needs to run unattended (a watched inbox or cron), the same `musiclib` subcommands become tools in the Claude Agent SDK.
+**Harness:** Claude Code comes first, for interactive use with no agent-loop code to maintain. Unattended ingestion runs as a plain script on a systemd timer (D42), with no LLM: everything it may do alone is already deterministic. An Agent SDK wrapper around the same `musiclib` subcommands is deferred.
 
 ## Safety rules
 
@@ -91,7 +91,7 @@ flowchart LR
 ### 2. Ingestion (new folders)
 
 1. Drop a folder into `inbox/`.
-2. Run `/ingest`, or have a watcher or cron job trigger it once unattended mode exists.
+2. Run `/ingest`, or let the hourly unattended runner take it (D42): it claims folders left unchanged for 10 minutes and does everything that needs no judgment; the rest waits for /review and /dedupe.
 3. The folder goes through the same pipeline, and dedupe also checks against the existing library, not just within the batch (D30).
 4. The folder is archived to `inbox/.processed/<date>/` when it is claimed, before any processing (D28). A short summary is produced at the end.
 
@@ -262,6 +262,7 @@ Every design decision is recorded here, newest first. To reverse one, mark it Su
 
 | # | Date | Decision | Rationale | Status |
 | --- | --- | --- | --- | --- |
+| D42 | 2026-10-21 | Unattended runner (M6): musiclib ingest run is a plain script with no LLM, started by a systemd user timer about once an hour. It claims every inbox folder left unchanged for 10 minutes, then scans, dedupes, matches, imports strong matches (D15) and no-candidate albums to Unsorted (D13), and applies the standing approvals D21, D22, D24 and D26 (D31), each logged as decided by auto. Everything else waits in the review queue for /review and /dedupe; upgrades (D32), editions and extra tracks are never applied unattended. A nightly timer runs the read-only audit check. Each run writes a report to state/reports/. The Agent SDK wrapper (D2) is deferred. | Every step the runner takes is already deterministic and covered by an existing approval, so an LLM adds cost without deciding anything more; judgment calls wait for you either way. The quiet period keeps half-copied folders from being claimed. | Accepted |
 | D41 | 2026-10-07 | musiclib import --redo ALBUM_KEY --add FOLDER... --reason "..." [--release MBID] adds the queue entries of further dump folders (other discs of the same release) to an imported album and imports it again as one: the album's library files are removed (each logged), the folders' files join its match row, the added rows leave the queue, and the album is re-imported on its current release (or on --release). Added folders must not be imported themselves; a skip decision on them is overridden. Dry run by default, --apply to act; only with the user's approval. | merge refuses an album once one of its folders is imported, so discs found later stayed out: Phish, Junta (disc 1 imported, disc 2 skipped) and Bastard Noise, Our Earth's Blood IV (CD3 imported, CD4 and CD5 skipped). Importing them separately would make several partial copies of one release. | Accepted |
 | D40 | 2026-10-05 | musiclib import --redo ALBUM_KEY --asis --reason "..." sends an imported album to Unsorted instead of another release: it removes the album's library files (each logged), records the decision as asis, and copies the dump folder to Unsorted/<dump folder>/ with names and tags untouched (D13). Dry run by default, --apply to act; only with the user's approval, like --redo on a release. | Arthur Brown's Kingdom Come, Galactic Zoo Dossier was approved on the 2003 CD, but the dump's track splits match none of the 8 MusicBrainz editions (intro cut from Internal Messenger, Creep 248 s vs 46 s, merged tracks), so beets put most files one track off. It should have gone as-is, but --redo needs a release and review decide refuses imported albums, so there was no way back short of removing files by hand. | Accepted |
 | D39 | 2026-10-03 | Periodic audit (M6): musiclib audit is read-only and writes state/reports/audit-<date>.json. It checks library integrity (beets items, files on disk and the audit log agree; library files unchanged since import; dump and inbox archive unchanged), damaged files, incomplete albums, missing art, and MusicBrainz drift (what mbsync would change, per album and field). mbsync changes are applied only in batches you approve through /audit, and logged. The decode check is incremental: each run decodes files not yet checked or changed since, checkpointed in the state DB and resumable with --limit. The unattended runner (watcher or cron, Agent SDK) comes later, once the audit has run by hand. | mbsync rewrites tags and can rename folders, so it is a library change like any other (rules 4 and 7). Decoding all 48,470 library tracks (about 490 GB) takes hours, so it has to run in pieces. An unattended runner should build on checks that have already been proven by hand. | Accepted |
@@ -313,6 +314,6 @@ Milestone 1 is read-only and starts once the dump path is known. Each later mile
 | M1 | Inventory | `musiclib inventory`: state DB with hashes, fingerprints and tags; a summary report of formats, MBID coverage and exact duplicates | Done |
 | M2 | Dedupe + verify | `musiclib dupes` and `musiclib verify`: duplicate groups at three tiers, keeper picks, tag mismatch list | Done |
 | M3 | Import | beets config, `musiclib import` (dry run, then apply), quarantine and manifest | Done |
-| M4 | Review agent | CLAUDE.md, `/dedupe` and `/review` skills, batch approval flow | In progress |
+| M4 | Review agent | CLAUDE.md, `/dedupe` and `/review` skills, batch approval flow | Done |
 | M5 | Ingestion | `inbox/` pipeline and `/ingest` skill, with dedupe against the existing library | Done |
 | M6 | Audit + unattended | `/audit`; optional Agent SDK runner triggered by a watcher or cron | In progress |

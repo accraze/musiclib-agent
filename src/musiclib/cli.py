@@ -177,6 +177,12 @@ def cmd_ingest(cfg: config.Config, args) -> None:
             _emit(ingest.import_batch(conn, cfg, args.batch, apply=args.apply))
         elif args.ingest_cmd == "upgrades":
             _emit(ingest.upgrades(conn, cfg, args.batch, apply=args.apply, decided_by=args.by))
+        elif args.ingest_cmd == "run":
+            from . import runner
+            if args.apply:
+                _emit(runner.run(conn, cfg, quiet_minutes=args.quiet_minutes, workers=args.workers))
+            else:
+                _emit(runner.plan(conn, cfg, quiet_minutes=args.quiet_minutes))
 
 
 def cmd_audit(cfg: config.Config, args) -> None:
@@ -357,6 +363,12 @@ def main(argv: list[str] | None = None) -> None:
     iu.add_argument("--by", choices=["agent", "user"], default="user")
     ir = isub.add_parser("report", help="batch manifest: every file and where it went (state/reports/)")
     ir.add_argument("--batch", required=True)
+    irn = isub.add_parser("run", help="D42 unattended pass: claim quiet folders, pipeline, strong + standing "
+                                      "imports (dry run without --apply)")
+    irn.add_argument("--apply", action="store_true")
+    irn.add_argument("--quiet-minutes", type=float, default=10,
+                     help="claim only folders unchanged for this long (default 10)")
+    irn.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2))
     ing.set_defaults(func=cmd_ingest)
 
     au = sub.add_parser("audit", help="M6 periodic audit (D39): read-only checks; mbsync applied only on approval")

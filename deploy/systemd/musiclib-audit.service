@@ -1,0 +1,10 @@
+# D42: the read-only audit check (D39); writes state/reports/audit-<date>.json.
+[Unit]
+Description=musiclib nightly audit check (D39, D42)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/src/music-agent
+ExecStart=%h/.local/bin/uv run --frozen musiclib audit check
+Nice=10
+IOSchedulingClass=idle

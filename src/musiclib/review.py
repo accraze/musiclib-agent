@@ -112,13 +112,19 @@ def _ensure(conn: sqlite3.Connection) -> None:
         conn.executescript(DUPES_SCHEMA)
 
 
-def listing(conn: sqlite3.Connection, kind: str, limit: int = 20, offset: int = 0) -> dict:
+def listing(conn: sqlite3.Connection, kind: str, limit: int = 20, offset: int = 0,
+            batches: list[int] | None = None) -> dict:
+    """`batches` narrows the queue to albums of those ingest batches (D42's runner)."""
     _ensure(conn)
+    where = f"({KIND_SQL[kind]}) AND m.decision IS NULL"
+    args: list = []
+    if batches is not None:
+        where += f" AND m.batch_id IN ({','.join('?' * len(batches))})"
+        args = list(batches)
     rows = conn.execute(f"""
-        SELECT m.* FROM matches m WHERE ({KIND_SQL[kind]}) AND m.decision IS NULL
-        ORDER BY m.distance, m.album_key LIMIT ? OFFSET ?""", (limit, offset)).fetchall()
-    total = conn.execute(
-        f"SELECT COUNT(*) FROM matches m WHERE ({KIND_SQL[kind]}) AND m.decision IS NULL").fetchone()[0]
+        SELECT m.* FROM matches m WHERE {where}
+        ORDER BY m.distance, m.album_key LIMIT ? OFFSET ?""", (*args, limit, offset)).fetchall()
+    total = conn.execute(f"SELECT COUNT(*) FROM matches m WHERE {where}", args).fetchone()[0]
     in_library = _imported_releases(conn)
     albums = []
     for m in rows:
@@ -233,8 +239,8 @@ def stats(conn: sqlite3.Connection) -> dict:
 def decide(conn: sqlite3.Connection, decisions: list[dict], decided_by: str) -> dict:
     """Record a batch. Each: {album_key, decision, album_id?, reason}. All-or-nothing."""
     migrate(conn)
-    if decided_by not in ("agent", "user"):
-        raise SystemExit("decided_by must be 'agent' or 'user'")
+    if decided_by not in ("agent", "user", "auto"):  # auto: the unattended runner (D42)
+        raise SystemExit("decided_by must be 'agent', 'user' or 'auto'")
     rows = []
     for d in decisions:
         key, decision = d.get("album_key"), d.get("decision")
@@ -372,12 +378,13 @@ def d24_check(album: dict, files_meta: list[tuple]) -> tuple[bool, str]:
 
 
 def auto_approve(conn: sqlite3.Connection, *, kind: str = "close", limit: int = 20,
-                 apply: bool = False) -> dict:
+                 apply: bool = False, batches: list[int] | None = None, decided_by: str = "agent") -> dict:
     """Split the next `limit` albums of `kind` into standing-approval decisions (D21/D22 for
-    close calls, D24 for unmatched) and albums to ask about."""
+    close calls, D24 for unmatched) and albums to ask about. `batches` limits it to those
+    ingest batches."""
     if kind not in ("close", "weak", "none"):
         raise SystemExit("auto works on --kind close, weak or none")
-    batch = listing(conn, kind, limit)
+    batch = listing(conn, kind, limit, batches=batches)
     auto, ask = [], []
     for a in batch["albums"]:
         files = json.loads(conn.execute("SELECT files FROM matches WHERE album_key = ?",
@@ -390,5 +397,5 @@ def auto_approve(conn: sqlite3.Connection, *, kind: str = "close", limit: int = 
     if apply and auto:
         decision = "asis" if kind == "none" else "approve"
         recorded = decide(conn, [{"album_key": a["album_key"], "decision": decision, "reason": a["d21"]}
-                                 for a in auto], "agent")
+                                 for a in auto], decided_by)
     return {"auto": auto, "ask": ask, "recorded": recorded, "remaining": batch["remaining"]}

@@ -50,5 +50,6 @@ You drive the subcommands; you never touch files yourself. Safety rules apply (d
 
 ## Not in scope
 
-No unattended runs yet (D39): the watcher/cron runner comes after the audit has run by hand.
+Unattended, only `audit check` runs (nightly, D42); its report is waiting in `state/reports/`
+when the user runs /audit. `decode`, `mbsync` and `apply` stay hand-run.
 Never run `beet` directly (D9).

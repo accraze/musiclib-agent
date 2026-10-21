@@ -15,6 +15,14 @@ Safety rules apply (docs/SPEC.md). In particular:
 - Nothing is imported that dedupe skipped; nothing in the library is replaced without an
   approved upgrade (D32).
 
+## Unattended runs (D42)
+
+`musiclib ingest run --apply` (hourly timer) may already have claimed folders: their batches
+show `claimed_by` auto in `ingest list`. It only does what needs no judgment (strong matches,
+Unsorted, standing approvals); what's left of its batches is in the review queue as usual, and
+its upgrades wait for step 8. Read the latest `state/reports/runner-*.json` before starting, and
+don't claim by hand while a runner is going (`state/runner.lock`).
+
 ## Loop (one folder at a time)
 
 1. `uv run musiclib ingest list`: folders waiting, loose files ignored, earlier batches.

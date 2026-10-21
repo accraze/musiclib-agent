@@ -353,6 +353,10 @@ def import_asis(library_dir: Path, mapping: dict[str, str]) -> list[tuple[str, s
     return moved
 
 
+class LibraryBusy(SystemExit):
+    """state/library.lock is held: another command is changing the library."""
+
+
 @contextlib.contextmanager
 def library_lock(state_dir: Path):
     """One library writer at a time: concurrent beets sessions (review imports, ingest)
@@ -364,7 +368,7 @@ def library_lock(state_dir: Path):
         try:
             fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise SystemExit("another command is changing the library (state/library.lock); "
+            raise LibraryBusy("another command is changing the library (state/library.lock); "
                              "try again when it finishes") from None
         yield
 
