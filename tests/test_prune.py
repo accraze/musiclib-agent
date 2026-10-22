@@ -30,7 +30,8 @@ def _audited(conn, cfg):
     for p in cfg.library_dir.rglob("*.mp3"):
         st = p.stat()
         conn.execute("INSERT OR REPLACE INTO audit_files VALUES (?, ?, ?, 'now')", (str(p), st.st_size, st.st_mtime))
-        conn.execute("INSERT OR REPLACE INTO audit_decode VALUES (?, ?, ?, 2.0, 2.0, 0, 'now')",
+        conn.execute("INSERT OR REPLACE INTO audit_decode (path, size, mtime, expected, decoded, errors, "
+                     "checked_at) VALUES (?, ?, ?, 2.0, 2.0, 0, 'now')",
                      (str(p), st.st_size, st.st_mtime))
     conn.commit()
 
@@ -99,6 +100,16 @@ def test_a_short_decode_holds_the_batch(env):
     conn.execute("UPDATE audit_decode SET decoded = 0.5")
     conn.commit()
     assert "decodes short" in ingest.prune(conn, cfg, clock=LATE)["held"][0]["why"][0]
+
+
+def test_a_header_stating_the_wrong_length_does_not_hold_the_batch(env):
+    """D44: short of its stated length, but as long as the MusicBrainz track."""
+    cfg, conn = env
+    _imported(cfg, conn)
+    _audited(conn, cfg)
+    conn.execute("UPDATE audit_decode SET expected = 9.0, mb_length = 2.0, mb_checked_at = 'now'")
+    conn.commit()
+    assert len(ingest.prune(conn, cfg, clock=LATE)["would_prune"]) == 1
 
 
 def test_an_unsettled_batch_is_left_alone(env):

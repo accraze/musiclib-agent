@@ -3,7 +3,9 @@
   check    fast checks: beets, disk and audit log agree; library files unchanged since
            beets wrote them; dump and inbox archive unchanged since inventory; incomplete
            albums; missing art. Folds in the decode and mbsync findings so far.
-  decode   incremental: decode library files not checked yet or changed since (beet bad).
+  decode   incremental: decode library files not checked yet or changed since (beet bad);
+           a file that decodes short of its stated length is measured against its
+           MusicBrainz track length instead, since MP3 headers often state it wrong (D44).
   mbsync   incremental: what MusicBrainz would change per album, stored, never applied.
   apply    mbsync on albums the user approved through /audit; logged (the only writer).
   relink   log library files beets moved without an audit row (D25 resync before D39).
@@ -33,7 +35,9 @@ CREATE TABLE IF NOT EXISTS audit_decode (
     expected    REAL,                  -- stated length (beets, else the original's inventory row)
     decoded     REAL NOT NULL,         -- seconds ffmpeg could decode
     errors      INTEGER NOT NULL,      -- ffmpeg error lines (corrupt frames)
-    checked_at  TEXT NOT NULL
+    checked_at  TEXT NOT NULL,
+    mb_length   REAL,                  -- D44: MusicBrainz track length, looked up for short files
+    mb_checked_at TEXT                 -- when it was looked up (NULL: not yet)
 );
 CREATE TABLE IF NOT EXISTS audit_mbsync (
     album_id    INTEGER PRIMARY KEY,   -- beets album id
@@ -61,7 +65,7 @@ AUDIO_EXTS = {"mp3", "flac", "m4a", "ogg", "opus", "wav", "aiff", "aif", "wma", 
 # change from the baseline does, unless beets wrote it (its mtime moved along).
 MTIME_SLACK = 5.0
 FIRST_SLACK = 300.0
-DAMAGED = 0.9          # decoded less than this share of the stated length
+DAMAGED = 0.9          # decoded less than this share of the length it should have (reference())
 EXAMPLES = 25
 SKIP_FIELDS = {"mtime", "path", "added", "id", "album_id"}
 
@@ -72,6 +76,21 @@ def now() -> str:
 
 def migrate(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(audit_decode)")}
+    for col, kind in (("mb_length", "REAL"), ("mb_checked_at", "TEXT")):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE audit_decode ADD COLUMN {col} {kind}")
+
+
+def reference(expected: float | None, mb_length: float | None) -> float | None:
+    """The length a file should decode to (D44): its MusicBrainz track length when known,
+    else the length its header states."""
+    return mb_length or expected
+
+
+def is_damaged(expected: float | None, decoded: float, mb_length: float | None = None) -> bool:
+    ref = reference(expected, mb_length)
+    return bool(ref) and decoded < DAMAGED * ref
 
 
 def library_audio(library_dir: Path) -> set[str]:
@@ -269,30 +288,76 @@ def run_decode(conn: sqlite3.Connection, lib, library_dir: Path, *, limit: int |
     pending = decode_pending(conn, library_dir)
     todo = pending[:limit] if limit else pending
     expected = _expected_lengths(conn, lib)
-    damaged = 0
+    short = 0
     with ThreadPoolExecutor(workers) as pool:
         for n, ((path, size, mtime), (secs, errors)) in enumerate(
                 zip(todo, pool.map(lambda t: decode(t[0]), todo)), 1):
             exp = expected.get(path)
-            conn.execute("INSERT OR REPLACE INTO audit_decode VALUES (?, ?, ?, ?, ?, ?, ?)",
-                         (path, size, mtime, exp, secs, errors, now()))
-            if exp and secs < DAMAGED * exp:
-                damaged += 1
+            conn.execute("""INSERT OR REPLACE INTO audit_decode (path, size, mtime, expected, decoded, errors,
+                            checked_at) VALUES (?, ?, ?, ?, ?, ?, ?)""", (path, size, mtime, exp, secs, errors, now()))
+            if is_damaged(exp, secs):
+                short += 1
             if n % 50 == 0 or n == len(todo):
                 conn.commit()
-                print(f"decode {n}/{len(todo)} ({damaged} damaged)", file=progress, flush=True)
+                print(f"decode {n}/{len(todo)} ({short} short of their stated length)", file=progress, flush=True)
     conn.commit()
-    return {"decoded": len(todo), "damaged_now": damaged, "still_pending": len(pending) - len(todo)}
+    looked_up = mb_lengths(conn, lib, progress=progress)
+    damaged = sum(is_damaged(r[0], r[1], r[2]) for r in conn.execute(
+        f"SELECT expected, decoded, mb_length FROM audit_decode WHERE path IN ({','.join('?' * len(todo))})",
+        [t[0] for t in todo])) if todo else 0
+    return {"decoded": len(todo), "damaged_now": damaged, "still_pending": len(pending) - len(todo),
+            "mb_lengths_looked_up": looked_up}
+
+
+def mb_lengths(conn: sqlite3.Connection, lib, *, progress=sys.stderr) -> int:
+    """D44: look up the MusicBrainz track length of each file that decodes short of its stated
+    length and hasn't been looked up since it was decoded. One request per release. A file
+    without a MusicBrainz release (Unsorted) keeps its stated length; on a network error the
+    album is tried again next run."""
+    from beets import metadata_plugins
+
+    todo = [r[0] for r in conn.execute("""SELECT path FROM audit_decode WHERE mb_checked_at IS NULL
+        AND expected > 0 AND decoded < ? * expected""", (DAMAGED,))]
+    if not todo:
+        return 0
+    want = set(todo)
+    by_album = defaultdict(list)
+    for item in lib.items():
+        p = os.fsdecode(item.path)
+        if p in want:
+            by_album[item.mb_albumid or ""].append(item)
+            want.discard(p)
+    done = []
+    for p in sorted(want):  # no longer a beets item: nothing to look up
+        done.append((None, now(), p))
+    for album_id, items in by_album.items():
+        if not album_id:
+            done += [(None, now(), os.fsdecode(i.path)) for i in items]
+            continue
+        try:
+            info = metadata_plugins.album_for_id(album_id)
+        except Exception as e:  # network or MusicBrainz trouble: try again next run
+            print(f"mb length {album_id}: {e}", file=progress)
+            continue
+        found = {i.id: t.length for i, t in _pairs(items, info)} if info else {}
+        done += [(found.get(i.id), now(), os.fsdecode(i.path)) for i in items]
+    conn.executemany("UPDATE audit_decode SET mb_length = ?, mb_checked_at = ? WHERE path = ?", done)
+    conn.commit()
+    return len(done)
 
 
 def decode_findings(conn: sqlite3.Connection) -> dict:
     rows = [dict(r) for r in conn.execute(
-        """SELECT path, expected, decoded, errors FROM audit_decode
+        """SELECT path, expected, mb_length, decoded, errors FROM audit_decode
            WHERE expected > 0 AND decoded < ? * expected ORDER BY path""", (DAMAGED,))]
+    damaged = [r for r in rows if is_damaged(r["expected"], r["decoded"], r["mb_length"])]
+    header = [r for r in rows if not is_damaged(r["expected"], r["decoded"], r["mb_length"])]
     noisy = conn.execute("SELECT COUNT(*) FROM audit_decode WHERE errors > 0").fetchone()[0]
     checked = conn.execute("SELECT COUNT(*) FROM audit_decode").fetchone()[0]
-    gone = [r["path"] for r in rows if not os.path.exists(r["path"])]
-    return {"checked": checked, "damaged": _cap([r for r in rows if r["path"] not in gone], 100),
+    return {"checked": checked,
+            "damaged": _cap([r for r in damaged if os.path.exists(r["path"])], 100),
+            # D44: short of the stated length only; the MusicBrainz length says they're whole
+            "header_length_wrong": _cap([r for r in header if os.path.exists(r["path"])]),
             "decode_errors_but_full_length": noisy}
 
 
@@ -551,6 +616,7 @@ def summary(report: dict) -> dict:
         },
         "attention": {"incomplete_albums": report["incomplete_albums"]["count"],
                       "no_art": report["no_art"]["count"], "mbsync_changed": m["changed"],
+                      "header_length_wrong": d["header_length_wrong"]["count"],
                       "mbsync_not_found": m["not_found"]},
         "coverage": {"decoded": d["checked"], "decode_pending": report["decode_pending"],
                      "mbsync_checked": m["checked"], "mbsync_unchecked": m["albums_unchecked"]},

@@ -43,7 +43,8 @@ You drive the subcommands; you never touch files yourself. Safety rules apply (d
 | `untracked` | a library file neither beets nor the log knows | Ask; it may have been copied in by hand |
 | `modified_since_import` | changed on disk after beets wrote it (another tagger, or damage) | Show the files. Once the user has looked, `audit check --accept-modified` |
 | `originals_missing` / `originals_changed` | the dump or the inbox archive changed (safety rule 1) | Stop and tell the user first: this should never happen |
-| `damaged` | decodes to less than 90% of its stated length | Compare with the dump original; the fix (`import --remove`, `--restore`, `--redo`) is the user's call |
+| `damaged` | decodes to less than 90% of its MusicBrainz track length (D44; the stated length when there is none, e.g. Unsorted) | Compare with the dump original; the fix (`import --remove`, `--restore`, `--redo`) is the user's call. Losing originals are usually damaged the same way: a better copy has to come from outside, through the inbox (upgrade) |
+| `header_length_wrong` | short of the length its header states, but as long as its MusicBrainz track (D44) | Nothing; the file plays in full. Count only |
 | `incomplete_albums` | fewer tracks than the release (box sets, partial discs) | Mostly intentional. List only the striking ones (1 of 20) |
 | `no_art` | album without cover art | List; fetching art is a follow-up |
 | `unsorted` | as-is folders, no MusicBrainz IDs by design (D13) | Counts only |

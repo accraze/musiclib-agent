@@ -125,10 +125,13 @@ def test_incomplete_album_and_missing_art(imported):
     assert audit.check(conn, lib, cfg.library_dir, cfg.source_dir)["no_art"]["count"] == 1
 
 
-def test_decode_is_incremental_and_flags_truncated_files(imported):
+def test_decode_is_incremental_and_flags_truncated_files(imported, monkeypatch):
     cfg, conn, _, audit, lib = imported
+    from beets import metadata_plugins
+
+    monkeypatch.setattr(metadata_plugins, "album_for_id", lambda _id: _fake_release())
     out = audit.run_decode(conn, lib, cfg.library_dir, workers=2, progress=io.StringIO())
-    assert out == {"decoded": 3, "damaged_now": 0, "still_pending": 0}
+    assert out == {"decoded": 3, "damaged_now": 0, "still_pending": 0, "mb_lengths_looked_up": 0}
     assert audit.run_decode(conn, lib, cfg.library_dir, progress=io.StringIO())["decoded"] == 0
     # Truncate one file: it is decoded again and flagged.
     f = cfg.library_dir / "Real Band" / "1999 - Real Album" / "03 Real Title 3.flac"
@@ -137,6 +140,43 @@ def test_decode_is_incremental_and_flags_truncated_files(imported):
     assert out["decoded"] == 1 and out["damaged_now"] == 1
     assert [os.path.basename(r["path"]) for r in audit.decode_findings(conn)["damaged"]["examples"]] == \
         ["03 Real Title 3.flac"]
+
+
+def test_short_files_are_measured_against_the_musicbrainz_length(imported, monkeypatch):
+    """D44: a file short of the length its header states is damaged only if it is also short
+    of its MusicBrainz track; files without a release, or whose lookup failed, keep the header."""
+    cfg, conn, _, audit, lib = imported
+    from beets import metadata_plugins
+
+    audit.run_decode(conn, lib, cfg.library_dir, progress=io.StringIO())
+    album = cfg.library_dir / "Real Band" / "1999 - Real Album"
+    f3 = album / "03 Real Title 3.flac"
+    f3.write_bytes(f3.read_bytes()[: f3.stat().st_size // 4])      # really cut short
+    # Track 1's header states 9 s; it decodes in full (2 s, the release length).
+    calls = []
+
+    def lookup(album_id):
+        calls.append(album_id)
+        raise ConnectionError("MusicBrainz down")
+
+    monkeypatch.setattr(metadata_plugins, "album_for_id", lookup)
+    audit.run_decode(conn, lib, cfg.library_dir, progress=io.StringIO())
+    conn.execute("UPDATE audit_decode SET expected = 9.0, mb_checked_at = NULL WHERE path LIKE '%01 Real Title 1%'")
+    conn.commit()
+    names = lambda key: sorted(os.path.basename(r["path"])  # noqa: E731
+                               for r in audit.decode_findings(conn)[key]["examples"])
+    assert names("damaged") == ["01 Real Title 1.mp3", "03 Real Title 3.flac"]  # lookup failed: header rules
+
+    monkeypatch.setattr(metadata_plugins, "album_for_id", lambda _id: (calls.append(_id), _fake_release())[1])
+    out = audit.run_decode(conn, lib, cfg.library_dir, progress=io.StringIO())
+    assert out["decoded"] == 0 and out["mb_lengths_looked_up"] == 2 and calls == ["rel-1", "rel-1"]
+    assert names("damaged") == ["03 Real Title 3.flac"]
+    assert names("header_length_wrong") == ["01 Real Title 1.mp3"]
+    assert audit.mb_lengths(conn, lib, progress=io.StringIO()) == 0     # looked up once only
+    # Decoded again (the file changed): looked up again.
+    conn.execute("UPDATE audit_decode SET size = 0 WHERE path LIKE '%03 Real Title 3%'")
+    conn.commit()
+    assert audit.run_decode(conn, lib, cfg.library_dir, progress=io.StringIO())["mb_lengths_looked_up"] == 1
 
 
 def test_mbsync_dry_run_records_changes_and_touches_nothing(imported, monkeypatch):

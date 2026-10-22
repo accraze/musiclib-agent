@@ -695,7 +695,7 @@ def _last_change(conn: sqlite3.Connection, b) -> datetime:
 
 def _verified(dest: str, baseline: dict, decoded: dict) -> str | None:
     """Why this library file doesn't count as a verified copy yet, or None (D43 (3))."""
-    from .audit import DAMAGED
+    from .audit import is_damaged, reference
 
     try:
         st = os.stat(dest)
@@ -707,8 +707,8 @@ def _verified(dest: str, baseline: dict, decoded: dict) -> str | None:
     d = decoded.get(dest)
     if d is None or d[:2] != now_:
         return f"library copy not decoded by audit decode yet: {dest}"
-    if d[2] and d[3] < DAMAGED * d[2]:
-        return f"library copy decodes short ({d[3]:.0f} of {d[2]:.0f} s): {dest}"
+    if is_damaged(d[2], d[3], d[4]):  # against the MusicBrainz length when known (D44)
+        return f"library copy decodes short ({d[3]:.0f} of {reference(d[2], d[4]):.0f} s): {dest}"
     return None
 
 
@@ -749,7 +749,7 @@ def prune(conn: sqlite3.Connection, cfg: Config, *, apply: bool = False, days: i
     placed = importer.current_paths(conn)
     baseline = {r[0]: (r[1], r[2]) for r in conn.execute("SELECT path, size, mtime FROM audit_files")}
     decoded = {r[0]: tuple(r[1:]) for r in conn.execute(
-        "SELECT path, size, mtime, expected, decoded FROM audit_decode")}
+        "SELECT path, size, mtime, expected, decoded, mb_length FROM audit_decode")}
     processed = cfg.processed_dir.resolve()
     ready, held, not_due, unsettled = [], [], 0, 0
     for b in conn.execute("SELECT * FROM ingest_batches WHERE pruned_at IS NULL ORDER BY id").fetchall():
