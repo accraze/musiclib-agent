@@ -55,6 +55,10 @@ decision is recorded without the user's approval of the batch (rule 7). Losing c
   copies are skipped, unless one is clearly better (lossless vs lossy, or complete vs partial):
   then ask whether to upgrade. An approved upgrade imports the new copy first, then removes the
   old library files with `musiclib import --remove ... --reason "replaced by <folder>"` (as D32).
+  A copy outside the group may be in the library already (another dump folder, an ingest), so
+  before approving a keeper check its release (`album_id`, or `best.album_id`) against beets:
+  `sqlite3 state/beets/library.db "select id, albumartist, album from albums where mb_albumid = '<id>'"`
+  (read-only). A hit is handled like an `imported` member (X-Ecutioners *Built From Scratch*).
 - **`only_here` is a hint, not proof.** AcoustID sometimes splits one song into two ids (other
   master, live vs studio). If both copies have a file with the same title and a similar length
   (as the Zappa *Dub Room Special* groups show for Inca Roads), it is the same track. A real
