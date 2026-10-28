@@ -27,6 +27,9 @@ The runner also prunes (D43): a batch settled for 30 days whose library copy the
 verified loses its `.processed/` folder. Never delete archive folders by hand; `ingest prune`
 (dry run) shows what is due and why the rest is held.
 
+The timer runs pass `--notify` (D45), so the user gets a desktop notification when folders
+newly wait for review; a hand-run `ingest run` should not pass it (it would mark them told).
+
 ## Loop (one folder at a time)
 
 1. `uv run musiclib ingest list`: folders waiting, loose files ignored, earlier batches.

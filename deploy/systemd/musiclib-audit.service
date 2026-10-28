@@ -2,11 +2,12 @@
 # state/reports/audit-<date>.json. Both feed D43's check that a library copy is verified.
 [Unit]
 Description=musiclib nightly audit decode + check (D39, D42, D43)
+OnFailure=musiclib-failed@%n.service
 
 [Service]
 Type=oneshot
 WorkingDirectory=%h/src/music-agent
 ExecStart=%h/.local/bin/uv run --frozen musiclib audit decode
-ExecStart=%h/.local/bin/uv run --frozen musiclib audit check
+ExecStart=%h/.local/bin/uv run --frozen musiclib audit check --notify
 Nice=10
 IOSchedulingClass=idle

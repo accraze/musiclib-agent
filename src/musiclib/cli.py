@@ -182,7 +182,11 @@ def cmd_ingest(cfg: config.Config, args) -> None:
         elif args.ingest_cmd == "run":
             from . import runner
             if args.apply:
-                _emit(runner.run(conn, cfg, quiet_minutes=args.quiet_minutes, workers=args.workers))
+                res = runner.run(conn, cfg, quiet_minutes=args.quiet_minutes, workers=args.workers)
+                if args.notify:  # D45
+                    from . import notify
+                    res["notified"] = notify.send(notify.runner_messages(conn, res))
+                _emit(res)
             else:
                 _emit(runner.plan(conn, cfg, quiet_minutes=args.quiet_minutes))
 
@@ -203,7 +207,11 @@ def cmd_audit(cfg: config.Config, args) -> None:
         cfg.reports_dir.mkdir(parents=True, exist_ok=True)
         out = cfg.reports_dir / f"audit-{report_date()}.json"
         out.write_text(json.dumps(rep, indent=1, ensure_ascii=False, default=str))
-        _emit({**audit.summary(rep), "written": str(out)})
+        summ = {**audit.summary(rep), "written": str(out)}
+        if args.notify:  # D45
+            from . import notify
+            summ["notified"] = notify.send(notify.audit_messages(conn, summ))
+        _emit(summ)
     elif cmd == "decode":
         _emit(audit.run_decode(conn, lib, cfg.library_dir, limit=args.limit, workers=args.workers))
     elif cmd == "mbsync":
@@ -376,6 +384,7 @@ def main(argv: list[str] | None = None) -> None:
     irn.add_argument("--quiet-minutes", type=float, default=10,
                      help="claim only folders unchanged for this long (default 10)")
     irn.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2))
+    irn.add_argument("--notify", action="store_true", help="D45: desktop notification of what is new (with --apply)")
     ing.set_defaults(func=cmd_ingest)
 
     au = sub.add_parser("audit", help="M6 periodic audit (D39): read-only checks; mbsync applied only on approval")
@@ -383,6 +392,7 @@ def main(argv: list[str] | None = None) -> None:
     ac = asub.add_parser("check", help="integrity, originals, incomplete albums, art; writes state/reports/audit-<date>.json")
     ac.add_argument("--accept-modified", action="store_true",
                     help="take files flagged as modified as they are now (after the user has looked)")
+    ac.add_argument("--notify", action="store_true", help="D45: desktop notification of problems new since last told")
     ad = asub.add_parser("decode", help="decode library files not checked yet or changed since (resumable)")
     ad.add_argument("--limit", type=int)
     ad.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2))

@@ -1,0 +1,7 @@
+# D45: a musiclib service that exited with an error (crash, not a reported problem).
+[Unit]
+Description=musiclib: tell the desktop that %i failed
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/notify-send --app-name musiclib --urgency critical "musiclib: %i failed" "journalctl --user -u %i"

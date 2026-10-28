@@ -1,10 +1,11 @@
 # D42: one unattended ingest pass. Runs from the main checkout (state_dir is relative).
 [Unit]
 Description=musiclib unattended ingest (D42)
+OnFailure=musiclib-failed@%n.service
 
 [Service]
 Type=oneshot
 WorkingDirectory=%h/src/music-agent
-ExecStart=%h/.local/bin/uv run --frozen musiclib ingest run --apply
+ExecStart=%h/.local/bin/uv run --frozen musiclib ingest run --apply --notify
 Nice=10
 IOSchedulingClass=idle
