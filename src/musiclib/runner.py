@@ -8,6 +8,8 @@ No LLM and no new judgment. Each run:
   4. applies the standing approvals D21/D22/D24/D26 (D31) to its batches' review albums,
      recorded as decided by 'auto', and imports them
   5. prunes archive folders of batches settled 30+ days with a verified library copy (D43)
+  5b. looks for exact cover art again (embedded, Cover Art Archive) for albums without it,
+     each album about once a week, and applies what it finds (D46)
   6. writes state/reports/runner-<time>.json and a manifest per batch it touched
 
 Everything else (dupe kind, upgrades, editions, extra tracks, albums the standing
@@ -181,6 +183,18 @@ def run(conn: sqlite3.Connection, cfg: Config, *, quiet_minutes: float = 10, wor
                 busy = str(e)
             except (Exception, SystemExit) as e:
                 res["errors"].append({"step": "prune", "error": f"{type(e).__name__}: {e}"})
+        if not busy:  # D46: exact cover art again for albums without it, each about weekly
+            try:
+                from . import art
+                from .importer import open_library
+
+                a = art.retry(conn, open_library(), cfg, progress=progress)
+                if a["checked"] or a["applied"]:
+                    res["art"] = a
+            except LibraryBusy as e:
+                busy = str(e)
+            except (Exception, SystemExit) as e:
+                res["errors"].append({"step": "cover art", "error": f"{type(e).__name__}: {e}"})
         if busy:
             res["library_busy"] = busy + " (imports resume on the next run)"
 
@@ -194,7 +208,7 @@ def run(conn: sqlite3.Connection, cfg: Config, *, quiet_minutes: float = 10, wor
             except (Exception, SystemExit) as e:
                 res["errors"].append({"batch": bid, "step": "report", "error": f"{type(e).__name__}: {e}"})
         res["finished"] = datetime.now().isoformat(timespec="seconds")
-        if touched or res["errors"] or res["not_claimed"] or busy or res.get("pruned"):  # quiet hours: no file
+        if touched or res["errors"] or res["not_claimed"] or busy or res.get("pruned") or res.get("art"):  # quiet hours: no file
             cfg.reports_dir.mkdir(parents=True, exist_ok=True)
             out = cfg.reports_dir / f"runner-{started.strftime('%Y-%m-%dT%H%M%S')}.json"
             out.write_text(json.dumps(res, indent=1, ensure_ascii=False, default=str))

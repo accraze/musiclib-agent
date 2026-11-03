@@ -80,6 +80,10 @@ def runner_messages(conn: sqlite3.Connection, res: dict, *, clock=None) -> list[
         folders = sorted({b["folder"] for b in res["batches"].values()})
         out.append(("Imported " + (f"{albums} album" if albums == 1 else f"{albums} albums"),
                     f"From {_names(folders)}.", "low"))
+    covers = (res.get("art") or {}).get("applied", 0)
+    if covers:
+        out.append((f"Cover art added to {covers} album{'s' if covers > 1 else ''}",
+                    "From exact sources (D46).", "low"))
     waiting = res.get("waiting_for_review", [])
     new = [w for w in waiting if f"review:{w['batch']}" not in seen]
     if new and not first:

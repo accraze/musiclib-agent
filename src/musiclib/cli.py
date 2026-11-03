@@ -5,6 +5,7 @@ import contextlib
 import json
 import os
 import sys
+from pathlib import Path
 
 from . import acoustid, config, db, dupes, inventory, report, verify
 
@@ -189,6 +190,32 @@ def cmd_ingest(cfg: config.Config, args) -> None:
                 _emit(res)
             else:
                 _emit(runner.plan(conn, cfg, quiet_minutes=args.quiet_minutes))
+
+
+def cmd_art(cfg: config.Config, args) -> None:
+    from . import beetsenv
+    beetsenv.setup(cfg)
+    from . import art, importer
+
+    conn = db.connect(cfg.db_path)
+    importer.migrate(conn)
+    art.migrate(conn)
+    lib = importer.open_library()
+    cmd = args.art_cmd
+    if cmd == "scan":
+        _emit(art.scan(conn, lib, cfg.state_dir, search_too=args.search, limit=args.limit))
+    elif cmd == "list":
+        waiting = art.pending_search(conn, lib)
+        _emit({"would_apply": art.plan(conn, lib), "waiting_for_pick": len(waiting),
+               "albums_without_art": len(art.missing(lib)),
+               "waiting": [{k: w[k] for k in ("album_id", "album")} | {"candidates": len(w["candidates"])}
+                           for w in waiting]})
+    elif cmd == "decide":
+        _emit(art.decide(conn, args.album_id, None if args.none else args.candidate, args.by))
+    elif cmd == "apply":
+        _emit(art.apply(conn, lib, cfg, apply=args.apply, albums=args.albums))
+    elif cmd == "gallery":
+        _emit(art.write_gallery(conn, lib, Path(args.out)))
 
 
 def cmd_audit(cfg: config.Config, args) -> None:
@@ -411,6 +438,25 @@ def main(argv: list[str] | None = None) -> None:
     arl.add_argument("--by", choices=["agent", "user"], default="agent")
     arl.add_argument("--apply", action="store_true")
     au.set_defaults(func=cmd_audit)
+
+    art_p = sub.add_parser("art", help="D46 cover art for albums without it (exact sources apply; search needs a pick)")
+    artsub = art_p.add_subparsers(dest="art_cmd", required=True)
+    asc = artsub.add_parser("scan", help="find art: embedded, Cover Art Archive; --search adds iTunes/Deezer candidates")
+    asc.add_argument("--search", action="store_true")
+    asc.add_argument("--limit", type=int)
+    artsub.add_parser("list", help="what apply would do, and the albums waiting for a pick")
+    adc = artsub.add_parser("decide", help="the user's pick for one album's search candidates")
+    adc.add_argument("album_id", type=int)
+    pick = adc.add_mutually_exclusive_group(required=True)
+    pick.add_argument("--candidate", type=int)
+    pick.add_argument("--none", action="store_true", help="no candidate fits; don't ask again")
+    adc.add_argument("--by", choices=["agent", "user"], default="user")
+    aap = artsub.add_parser("apply", help="write cover.<ext> + embed into tracks without art (dry run without --apply)")
+    aap.add_argument("--albums", type=int, nargs="+")
+    aap.add_argument("--apply", action="store_true")
+    agl = artsub.add_parser("gallery", help="JSON for the gallery page: albums waiting for a pick, with thumbnails")
+    agl.add_argument("--out", required=True)
+    art_p.set_defaults(func=cmd_art)
 
     rep = sub.add_parser("report", help="summarize the inventory as JSON")
     rep.add_argument("--top", type=int, default=10, help="examples per section")

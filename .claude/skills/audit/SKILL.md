@@ -46,7 +46,7 @@ You drive the subcommands; you never touch files yourself. Safety rules apply (d
 | `damaged` | decodes to less than 90% of its MusicBrainz track length (D44; the stated length when there is none, e.g. Unsorted) | Compare with the dump original; the fix (`import --remove`, `--restore`, `--redo`) is the user's call. Losing originals are usually damaged the same way: a better copy has to come from outside, through the inbox (upgrade) |
 | `header_length_wrong` | short of the length its header states, but as long as its MusicBrainz track (D44) | Nothing; the file plays in full. Count only |
 | `incomplete_albums` | fewer tracks than the release (box sets, partial discs) | Mostly intentional. List only the striking ones (1 of 20) |
-| `no_art` | album without cover art | List; fetching art is a follow-up |
+| `no_art` | album without a folder image | `musiclib art list`: exact art applies weekly from the runner (D46); albums waiting for a pick go on the gallery page (`art scan --search`, then `art gallery`) |
 | `unsorted` | as-is folders, no MusicBrainz IDs by design (D13) | Counts only |
 
 ## Not in scope
