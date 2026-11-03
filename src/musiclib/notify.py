@@ -7,6 +7,7 @@ already known (the review backlog, the audit's problems). A notification that ca
 never fails the run.
 """
 
+import hashlib
 import shutil
 import sqlite3
 import subprocess
@@ -14,7 +15,7 @@ from datetime import datetime, timezone
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS notify_seen (
-    key      TEXT PRIMARY KEY,     -- review:<batch> | audit:<problem> | busy | runner:/audit:baseline
+    key      TEXT PRIMARY KEY,     -- review:<batch> | error:<hash> | audit:<problem> | busy | runner:/audit:baseline
     value    TEXT,                 -- audit: the count told; busy: since when
     seen_at  TEXT NOT NULL
 );
@@ -58,6 +59,11 @@ def _names(folders: list[str], n: int = 3) -> str:
     return ", ".join(folders[:n]) + (f" and {len(folders) - n} more" if len(folders) > n else "")
 
 
+def _error_key(e: dict) -> str:
+    text = f"{e.get('batch', '')}|{e.get('step', '')}|{e.get('error', '')}"
+    return "error:" + hashlib.sha1(text.encode()).hexdigest()[:16]
+
+
 def runner_messages(conn: sqlite3.Connection, res: dict, *, clock=None) -> list[tuple[str, str, str]]:
     """(title, body, urgency) for what this runner pass did that is new. Records what it told."""
     if "skipped" in res:
@@ -84,12 +90,21 @@ def runner_messages(conn: sqlite3.Connection, res: dict, *, clock=None) -> list[
     still = {f"review:{w['batch']}" for w in waiting}
     for k in [k for k in seen if k.startswith("review:") and k not in still]:  # settled: forget
         conn.execute("DELETE FROM notify_seen WHERE key = ?", (k,))
-    errs = res.get("errors", []) + [{"step": "claim", "error": f"{n['folder']}: {n['why']}"}
-                                    for n in res.get("not_claimed", [])]
-    if errs:
-        e = errs[0]
-        out.append((f"Unattended ingest: {len(errs)} error{'s' if len(errs) > 1 else ''}",
-                    f"{e.get('step')}: {e.get('error')}"[:300] + "\nSee state/reports/runner-*.json.", "critical"))
+    # An error the runner hits every hour (a folder it can't claim) is told once, like a
+    # waiting batch; told again only if it clears and comes back.
+    errs = {_error_key(e): e for e in res.get("errors", []) + [
+        {"step": "claim", "error": f"{n['folder']}: {n['why']}"} for n in res.get("not_claimed", [])]}
+    new_errs = [e for k, e in errs.items() if k not in seen]
+    if new_errs:
+        e, old = new_errs[0], len(errs) - len(new_errs)
+        out.append((f"Unattended ingest: {len(new_errs)} new error{'s' if len(new_errs) > 1 else ''}",
+                    f"{e.get('step')}: {e.get('error')}"[:300]
+                    + (f"\n({old} reported before, still there.)" if old else "")
+                    + "\nSee state/reports/runner-*.json.", "critical"))
+    for k in errs:
+        _mark(conn, k)
+    for k in [k for k in seen if k.startswith("error:") and k not in errs]:  # cleared: forget
+        conn.execute("DELETE FROM notify_seen WHERE key = ?", (k,))
     if res.get("library_busy"):
         since = seen.get("busy") or t.isoformat()
         if "busy" not in seen:

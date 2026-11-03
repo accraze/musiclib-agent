@@ -53,7 +53,22 @@ def test_errors_and_failed_claims_are_critical_even_on_the_first_run():
     res = _run(errors=[{"batch": 3, "step": "pipeline", "error": "OSError: disk full"}])
     res["not_claimed"] = [{"folder": "X", "why": "permission denied"}]
     [(title, body, urgency)] = notify.runner_messages(conn, res)
-    assert title == "Unattended ingest: 2 errors" and "disk full" in body and urgency == "critical"
+    assert title == "Unattended ingest: 2 new errors" and "disk full" in body and urgency == "critical"
+
+
+def test_an_error_that_repeats_every_run_is_told_once():
+    conn = _conn()
+    notify.runner_messages(conn, _run())
+    stuck = _run()
+    stuck["not_claimed"] = [{"folder": "Leftovers", "why": "has no audio files"}]
+    assert len(notify.runner_messages(conn, stuck)) == 1
+    assert notify.runner_messages(conn, stuck) == []                          # next hour: known
+    more = _run(errors=[{"batch": 7, "step": "import", "error": "OSError: disk full"}])
+    more["not_claimed"] = stuck["not_claimed"]
+    [(title, body, _)] = notify.runner_messages(conn, more)
+    assert title == "Unattended ingest: 1 new error" and "disk full" in body and "1 reported before" in body
+    notify.runner_messages(conn, _run())                                      # all cleared: forgotten
+    assert len(notify.runner_messages(conn, stuck)) == 1                     # back again: told again
 
 
 def test_a_lock_held_for_hours_is_told_once():
