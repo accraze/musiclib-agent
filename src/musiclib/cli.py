@@ -218,6 +218,28 @@ def cmd_art(cfg: config.Config, args) -> None:
         _emit(art.write_gallery(conn, lib, Path(args.out)))
 
 
+def cmd_wanted(cfg: config.Config, args) -> None:
+    from . import beetsenv
+    beetsenv.setup(cfg)
+    from . import importer, wanted
+
+    conn = db.connect(cfg.db_path)
+    importer.migrate(conn)
+    wanted.migrate(conn)
+    cmd = args.wanted_cmd
+    if cmd == "refresh":
+        _emit(wanted.refresh(conn, importer.open_library(), cfg.library_dir))
+    elif cmd == "list":
+        rows = wanted.entries(conn, args.status, args.kind)
+        _emit({"status": args.status, "count": len(rows), "by_kind": wanted.counts(conn), "entries": rows})
+    elif cmd == "add":
+        _emit(wanted.add(conn, importer.open_library(), args.artist, args.album, note=args.note, added_by=args.by))
+    elif cmd == "dismiss":
+        _emit(wanted.dismiss(conn, args.ids, reason=args.reason, by=args.by))
+    elif cmd == "page":
+        _emit(wanted.write_page(conn, Path(args.out)))
+
+
 def cmd_audit(cfg: config.Config, args) -> None:
     from . import beetsenv
     beetsenv.setup(cfg)
@@ -235,9 +257,13 @@ def cmd_audit(cfg: config.Config, args) -> None:
         out = cfg.reports_dir / f"audit-{report_date()}.json"
         out.write_text(json.dumps(rep, indent=1, ensure_ascii=False, default=str))
         summ = {**audit.summary(rep), "written": str(out)}
+        from . import wanted  # D47: the decode findings feed the wanted list
+        w = wanted.refresh(conn, lib, cfg.library_dir)
+        summ["wanted"] = {"open": w["open"], "added": w["added"], "fulfilled": len(w["fulfilled"])}
         if args.notify:  # D45
             from . import notify
-            summ["notified"] = notify.send(notify.audit_messages(conn, summ))
+            summ["notified"] = notify.send(notify.audit_messages(conn, summ)
+                                           + notify.wanted_messages(w["fulfilled"]))
         _emit(summ)
     elif cmd == "decode":
         _emit(audit.run_decode(conn, lib, cfg.library_dir, limit=args.limit, workers=args.workers))
@@ -457,6 +483,25 @@ def main(argv: list[str] | None = None) -> None:
     agl = artsub.add_parser("gallery", help="JSON for the gallery page: albums waiting for a pick, with thumbnails")
     agl.add_argument("--out", required=True)
     art_p.set_defaults(func=cmd_art)
+
+    wp = sub.add_parser("wanted", help="D47 wanted list: damaged and low-bitrate albums, and your own entries")
+    wsub = wp.add_subparsers(dest="wanted_cmd", required=True)
+    wsub.add_parser("refresh", help="update automatic entries from the library; close what's fixed or arrived")
+    wl = wsub.add_parser("list", help="entries (open by default)")
+    wl.add_argument("--status", choices=["open", "fulfilled", "dismissed"], default="open")
+    wl.add_argument("--kind", choices=["manual", "damaged", "damaged_file", "low_bitrate"])
+    wa = wsub.add_parser("add", help="want an album: closed when one of that artist and title is imported")
+    wa.add_argument("--artist", required=True)
+    wa.add_argument("--album", required=True)
+    wa.add_argument("--note")
+    wa.add_argument("--by", choices=["agent", "user"], default="user")
+    wd = wsub.add_parser("dismiss", help="take entries off the list for good")
+    wd.add_argument("ids", type=int, nargs="+")
+    wd.add_argument("--reason", required=True)
+    wd.add_argument("--by", choices=["agent", "user"], default="user")
+    wpg = wsub.add_parser("page", help="the open list as a self-contained HTML page")
+    wpg.add_argument("--out", required=True)
+    wp.set_defaults(func=cmd_wanted)
 
     rep = sub.add_parser("report", help="summarize the inventory as JSON")
     rep.add_argument("--top", type=int, default=10, help="examples per section")

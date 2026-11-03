@@ -74,6 +74,10 @@ absolute path under `inbox/.processed/`. An `ingest duplicate review: <kind> vs 
 note puts one under `dupe`:
 - `upgrade`: better audio than the library copy. Approve = import it; afterwards
   `musiclib ingest upgrades --batch <id>` removes the old copy (D32, ask the user first).
+  An upgrade note saying "wanted, D47" is a same-quality copy of an album with damaged tracks.
+- `wanted` (D47): holds a copy of a damaged library track on the wanted list, at lower quality or
+  against an Unsorted single. Approve = import it alongside; then ask the user whether to remove the
+  damaged copy (`musiclib import --remove <file> --reason "replaced by <new file> (D47)"`).
 - `extra_tracks` / `edition`: approve = keep both copies; skip = leave the new one out.
 An `ingest flag: dump_overlap` note means the same album is also in the dump queue: never
 import both; decide them together.

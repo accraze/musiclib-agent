@@ -10,6 +10,7 @@ No LLM and no new judgment. Each run:
   5. prunes archive folders of batches settled 30+ days with a verified library copy (D43)
   5b. looks for exact cover art again (embedded, Cover Art Archive) for albums without it,
      each album about once a week, and applies what it finds (D46)
+  5c. after imports, refreshes the wanted list (D47): entries that arrived are closed
   6. writes state/reports/runner-<time>.json and a manifest per batch it touched
 
 Everything else (dupe kind, upgrades, editions, extra tracks, albums the standing
@@ -195,6 +196,19 @@ def run(conn: sqlite3.Connection, cfg: Config, *, quiet_minutes: float = 10, wor
                 busy = str(e)
             except (Exception, SystemExit) as e:
                 res["errors"].append({"step": "cover art", "error": f"{type(e).__name__}: {e}"})
+        imported = sum(r.get("imported", 0) for bt in res["batches"].values()
+                       for r in (bt.get("imported") or {}).values())
+        imported += sum(r.get("imported", 0) for r in (res.get("standing") or {}).get("imported", {}).values())
+        if imported:  # D47: what arrived may be on the wanted list
+            try:
+                from . import wanted
+                from .importer import open_library
+
+                w = wanted.refresh(conn, open_library(), cfg.library_dir)
+                if w["fulfilled"]:
+                    res["wanted_fulfilled"] = w["fulfilled"]
+            except (Exception, SystemExit) as e:
+                res["errors"].append({"step": "wanted list", "error": f"{type(e).__name__}: {e}"})
         if busy:
             res["library_busy"] = busy + " (imports resume on the next run)"
 

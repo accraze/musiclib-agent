@@ -312,12 +312,19 @@ def _same_recordings(mine: list, theirs: list) -> tuple[set[str], set[str]]:
     return mk, tk
 
 
-def _classify(f, lib, same: set) -> tuple[str, str, str]:
-    """(outcome, kind, reason) for a batch folder that holds a library folder or is held by it."""
+def _classify(f, lib, same: set, hurt: frozenset = frozenset()) -> tuple[str, str, str]:
+    """(outcome, kind, reason) for a batch folder that holds a library folder or is held by it.
+    `hurt`: track keys of damaged library files on the wanted list (D47)."""
     extra = len(f.keys - same)
     if f.release and lib.release and f.release != lib.release:
         return ("review", "edition", f"tagged as another release than the library copy "
                 f"({f.release} vs {lib.release}): edition?")
+    if (n := len(f.keys & lib.keys & hurt)):  # D47: never skip a copy of something wanted
+        if "/Unsorted/" not in lib.path and _quality(f) >= _quality(lib):
+            return ("review", "upgrade", f"the library copy has {n} damaged track(s) this one has "
+                    "(wanted, D47): replace it? (D32)")
+        return ("review", "wanted", f"holds {n} damaged library track(s) on the wanted list (D47): "
+                "import it, then remove the damaged copy with import --remove?")
     if _quality(f) > _quality(lib):
         return ("review", "upgrade", "better audio than the library copy: replace it? (D32)")
     if extra:
@@ -335,7 +342,7 @@ def dedupe(conn: sqlite3.Connection, ref: str | int) -> dict:
     """D30: duplicates inside the batch and against the library. Proposals in ingest_dupes;
     nothing moves. skip = not imported (the manifest names the kept copy), review = asked,
     flag = only reported (overlap with dump albums that aren't in the library, Q4)."""
-    from . import dupes
+    from . import dupes, wanted
 
     b = batch(conn, ref)
     if b["status"] == "claimed":
@@ -361,6 +368,7 @@ def dedupe(conn: sqlite3.Connection, ref: str | int) -> dict:
     lib_rows = _library_rows(conn)
     _, library = dupes.folders_of(lib_rows)
     lib_sha = {r["sha256"]: r["path"] for r in lib_rows if r["sha256"]}
+    hurt = frozenset(wanted.damaged_keys(conn, lib_rows))
     decided = set(gone)
     for f, lib, same, mine_share, lib_share in sorted(
             _overlaps({p: f for p, f in mine.items() if p not in gone}, library, dupes.CONTAINMENT,
@@ -370,7 +378,7 @@ def dedupe(conn: sqlite3.Connection, ref: str | int) -> dict:
             continue  # compared with its best-covering library album already
         decided.add(f.path)
         stats = json.dumps({"ingest": f.stats(), "library": lib.stats()})
-        o = _classify(f, lib, same)
+        o = _classify(f, lib, same, hurt)
         out.append((f.path, "folder", *o[:2], lib.path, round(mine_share, 3), o[2], stats))
 
     # D38: library folders of the same artist and album, however few tracks AcoustID links
@@ -395,7 +403,7 @@ def dedupe(conn: sqlite3.Connection, ref: str | int) -> dict:
         decided.add(p)
         stats = json.dumps({"ingest": f.stats(), "library": lib.stats()})
         if share >= dupes.CONTAINMENT:
-            o = _classify(f, lib, mk)
+            o = _classify(f, lib, mk, hurt)
         else:
             o = ("review", "edition", f"same artist and album as the library copy, but only {len(tk)} of "
                  f"its {len(lib.keys)} tracks match: another master or edition? (D38)")

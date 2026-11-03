@@ -84,6 +84,7 @@ def runner_messages(conn: sqlite3.Connection, res: dict, *, clock=None) -> list[
     if covers:
         out.append((f"Cover art added to {covers} album{'s' if covers > 1 else ''}",
                     "From exact sources (D46).", "low"))
+    out += wanted_messages(res.get("wanted_fulfilled", []))
     waiting = res.get("waiting_for_review", [])
     new = [w for w in waiting if f"review:{w['batch']}" not in seen]
     if new and not first:
@@ -145,6 +146,14 @@ def audit_messages(conn: sqlite3.Connection, summary: dict) -> list[tuple[str, s
     urgent = any(p in CRITICAL for p, _, _ in grew)
     return [("Library audit: new problems" if not urgent else "Library audit: the dump or archive changed",
              "\n".join(lines) + "\nRun /audit to look.", "critical" if urgent else "normal")]
+
+
+def wanted_messages(fulfilled: list[dict]) -> list[tuple[str, str, str]]:
+    """D47: entries that came off the wanted list (each is closed once, so told once)."""
+    if not fulfilled:
+        return []
+    n = len(fulfilled)
+    return [(f"{n} off the wanted list", _names([f["entry"] for f in fulfilled]) + ".", "normal")]
 
 
 def send(messages: list[tuple[str, str, str]], sender=desktop) -> list[dict]:
