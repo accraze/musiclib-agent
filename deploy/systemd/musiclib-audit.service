@@ -1,13 +1,16 @@
 # D42/D43: decode new library files, then the read-only audit check (D39), which writes
 # state/reports/audit-<date>.json. Both feed D43's check that a library copy is verified.
+# D48: a slice of MusicBrainz re-checks (dry run, oldest first; the whole library in about
+# 16 nights, then round again). "-": MusicBrainz trouble doesn't stop the check.
 [Unit]
-Description=musiclib nightly audit decode + check (D39, D42, D43)
+Description=musiclib nightly audit decode + mbsync slice + check (D39, D42, D43, D48)
 OnFailure=musiclib-failed@%n.service
 
 [Service]
 Type=oneshot
 WorkingDirectory=%h/src/music-agent
 ExecStart=%h/.local/bin/uv run --frozen musiclib audit decode
+ExecStart=-%h/.local/bin/uv run --frozen musiclib audit mbsync --limit 300
 ExecStart=%h/.local/bin/uv run --frozen musiclib audit check --notify
 Nice=10
 IOSchedulingClass=idle

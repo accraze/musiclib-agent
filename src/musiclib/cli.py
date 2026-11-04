@@ -263,7 +263,8 @@ def cmd_audit(cfg: config.Config, args) -> None:
         if args.notify:  # D45
             from . import notify
             summ["notified"] = notify.send(notify.audit_messages(conn, summ)
-                                           + notify.wanted_messages(w["fulfilled"]))
+                                           + notify.wanted_messages(w["fulfilled"])
+                                           + notify.mbsync_messages(conn))
         _emit(summ)
     elif cmd == "decode":
         _emit(audit.run_decode(conn, lib, cfg.library_dir, limit=args.limit, workers=args.workers))
@@ -279,6 +280,8 @@ def cmd_audit(cfg: config.Config, args) -> None:
             return
         with importer.library_lock(cfg.state_dir):
             _emit(audit.apply_mbsync(conn, lib, args.albums, args.reason, args.by))
+    elif cmd == "leave":
+        _emit(audit.leave(conn, args.albums, args.reason, args.by))
     elif cmd == "relink":
         with importer.library_lock(cfg.state_dir) if args.apply else contextlib.nullcontext():
             _emit(audit.relink(conn, lib, cfg.library_dir, args.by, apply=args.apply))
@@ -460,6 +463,10 @@ def main(argv: list[str] | None = None) -> None:
     aa.add_argument("--reason", required=True)
     aa.add_argument("--by", choices=["agent", "user"], default="agent")
     aa.add_argument("--apply", action="store_true")
+    alv = asub.add_parser("leave", help="D48: don't apply these albums' MusicBrainz changes; quiet until they differ")
+    alv.add_argument("--albums", type=int, nargs="+", required=True, help="beets album ids")
+    alv.add_argument("--reason", required=True)
+    alv.add_argument("--by", choices=["agent", "user"], default="user")
     arl = asub.add_parser("relink", help="log library files beets moved without an audit row (dry run without --apply)")
     arl.add_argument("--by", choices=["agent", "user"], default="agent")
     arl.add_argument("--apply", action="store_true")

@@ -259,3 +259,46 @@ def test_relink_logs_files_beets_moved_without_a_row(imported):
     problems = audit.summary(audit.check(conn, lib, cfg.library_dir, cfg.source_dir))["problems"]
     assert problems == {k: 0 for k in problems}
     assert json.loads(json.dumps(importer.current_paths(conn)))  # still a plain mapping
+
+
+def test_left_changes_stay_quiet_until_musicbrainz_proposes_something_else(imported, monkeypatch):
+    """D48: a proposal the user chose to leave isn't proposed (or told) again while it's the same."""
+    cfg, conn, _, audit, lib = imported
+    from beets import metadata_plugins
+    from musiclib import notify
+
+    monkeypatch.setattr(metadata_plugins, "album_for_id",
+                        lambda _id: _fake_release(titles=("Real Title 1", "Corrected Title", "Real Title 3")))
+    audit.run_mbsync(conn, lib, progress=io.StringIO())
+    [(title, body, urgency)] = notify.mbsync_messages(conn)
+    assert title == "1 album has MusicBrainz corrections" and urgency == "low"
+    assert notify.mbsync_messages(conn) == []                         # told once
+    album_id = lib.albums()[0].id
+    assert audit.leave(conn, [album_id], "this copy's titles are right", "user")["left"] == 1
+
+    assert audit.run_mbsync(conn, lib, progress=io.StringIO())["left"] == 1  # same proposal: still left
+    assert audit.mbsync_findings(conn)["changed"] == 0 and audit.mbsync_findings(conn)["left"] == 1
+    assert notify.mbsync_messages(conn) == []
+
+    monkeypatch.setattr(metadata_plugins, "album_for_id",
+                        lambda _id: _fake_release(titles=("Real Title 1", "Another Title", "Real Title 3")))
+    assert audit.run_mbsync(conn, lib, progress=io.StringIO())["changed"] == 1  # something new: asked again
+    assert len(notify.mbsync_messages(conn)) == 1
+    row = conn.execute("SELECT left_reason FROM audit_mbsync WHERE album_id = ?", (album_id,)).fetchone()
+    assert row[0] == "this copy's titles are right"                    # the old decision is kept on record
+
+
+def test_mbsync_stops_when_musicbrainz_is_down(imported, monkeypatch):
+    cfg, conn, _, audit, lib = imported
+    from beets import metadata_plugins
+
+    calls = []
+
+    def down(_id):
+        calls.append(_id)
+        raise ConnectionError("unreachable")
+
+    monkeypatch.setattr(metadata_plugins, "album_for_id", down)
+    monkeypatch.setattr(audit, "MAX_ERRORS", 1)
+    out = audit.run_mbsync(conn, lib, progress=io.StringIO())
+    assert out["error"] == 1 and out["stopped_after_errors"] == 1 and len(calls) == 1

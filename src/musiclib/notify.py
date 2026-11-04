@@ -8,6 +8,7 @@ never fails the run.
 """
 
 import hashlib
+import json
 import shutil
 import sqlite3
 import subprocess
@@ -146,6 +147,30 @@ def audit_messages(conn: sqlite3.Connection, summary: dict) -> list[tuple[str, s
     urgent = any(p in CRITICAL for p, _, _ in grew)
     return [("Library audit: new problems" if not urgent else "Library audit: the dump or archive changed",
              "\n".join(lines) + "\nRun /audit to look.", "critical" if urgent else "normal")]
+
+
+def mbsync_messages(conn: sqlite3.Connection) -> list[tuple[str, str, str]]:
+    """D48: albums with MusicBrainz corrections not told yet (or whose proposal changed since).
+    Applied, left or settled albums are forgotten, so a later proposal is news again."""
+    from .audit import digest
+
+    seen = _seen(conn)
+    rows = conn.execute("SELECT album_id, album, changes FROM audit_mbsync WHERE status = 'changed'").fetchall()
+    now_keys, new = set(), []
+    for r in rows:
+        key, d = f"mbsync:{r['album_id']}", digest(json.loads(r["changes"]) if r["changes"] else None)
+        now_keys.add(key)
+        if seen.get(key) != d:
+            new.append(r["album"])
+            _mark(conn, key, d)
+    for k in [k for k in seen if k.startswith("mbsync:") and k not in now_keys]:
+        conn.execute("DELETE FROM notify_seen WHERE key = ?", (k,))
+    conn.commit()
+    if not new:
+        return []
+    n = len(new)
+    return [(f"{n} album{'s have' if n > 1 else ' has'} MusicBrainz corrections",
+             _names(sorted(new)) + ". Run /audit to review.", "low")]
 
 
 def wanted_messages(fulfilled: list[dict]) -> list[tuple[str, str, str]]:

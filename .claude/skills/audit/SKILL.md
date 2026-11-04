@@ -32,6 +32,10 @@ You drive the subcommands; you never touch files yourself. Safety rules apply (d
    (dry run), then the same with `--apply --by agent` (or `--by user` when the user picked
    them). Each album is re-checked just before it's applied; one that no longer differs is
    skipped. Report what moved.
+   For the `leave` ones the user agreed to: `uv run musiclib audit leave --albums <ids...>
+   --reason "<why, in the user's words>" --by user` (D48). They stay quiet in later re-checks
+   until MusicBrainz proposes something different. Never leave albums the user hasn't seen.
+   Minor fields only (`isrc`, `trackdisambig`, `releasegroupdisambig`): offer to apply them as one batch.
 
 ## Reading the check
 
@@ -51,7 +55,8 @@ You drive the subcommands; you never touch files yourself. Safety rules apply (d
 
 ## Not in scope
 
-Unattended, `audit decode` (new files only) and `audit check` run nightly (D42, D43); the report
-is waiting in `state/reports/` when the user runs /audit. `mbsync` and `apply` stay hand-run.
+Unattended, `audit decode` (new files only), a 300-album `audit mbsync` slice (D48) and `audit check`
+run nightly (D42, D43); the report is waiting in `state/reports/` when the user runs /audit, and the
+user is notified of albums with new corrections. `apply` and `leave` stay the user's decision.
 Originals of batches pruned under D43 are not expected, so they never show as missing.
 Never run `beet` directly (D9).

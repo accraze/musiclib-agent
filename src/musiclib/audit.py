@@ -13,6 +13,7 @@
 Results live in audit_decode / audit_mbsync so long checks run in pieces (--limit).
 """
 
+import hashlib
 import json
 import os
 import re
@@ -44,10 +45,14 @@ CREATE TABLE IF NOT EXISTS audit_mbsync (
     mb_albumid  TEXT NOT NULL,
     album       TEXT NOT NULL,         -- "albumartist - album", for people
     album_dir   TEXT,
-    status      TEXT NOT NULL,         -- same | changed | not_found | applied
+    status      TEXT NOT NULL,         -- same | changed | not_found | applied | left
     changes     TEXT,                  -- JSON: album fields, per-item fields, moves
     checked_at  TEXT NOT NULL,
-    applied_at  TEXT
+    applied_at  TEXT,
+    left_digest TEXT,                  -- D48: the changes the user chose to leave (digest)
+    left_reason TEXT,
+    left_by     TEXT,
+    left_at     TEXT
 );
 -- Each library file's size and mtime as the last check saw it, so a later change shows.
 CREATE TABLE IF NOT EXISTS audit_files (
@@ -80,6 +85,10 @@ def migrate(conn: sqlite3.Connection) -> None:
     for col, kind in (("mb_length", "REAL"), ("mb_checked_at", "TEXT")):
         if col not in cols:
             conn.execute(f"ALTER TABLE audit_decode ADD COLUMN {col} {kind}")
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(audit_mbsync)")}
+    for col in ("left_digest", "left_reason", "left_by", "left_at"):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE audit_mbsync ADD COLUMN {col} TEXT")
 
 
 def reference(expected: float | None, mb_length: float | None) -> float | None:
@@ -411,32 +420,56 @@ def album_diff(album, info) -> dict:
     return {"fields": dict(fields), "tracks": tracks, "moves": moves}
 
 
+MAX_ERRORS = 10  # lookups failing in a row: MusicBrainz is down, stop until the next run
+
+
+def digest(diff: dict | None) -> str | None:
+    """Identity of a set of proposed changes: a left proposal stays left while it is the same."""
+    if not diff:
+        return None
+    body = json.dumps([diff.get("tracks", []), diff.get("moves", [])], sort_keys=True, ensure_ascii=False)
+    return hashlib.sha1(body.encode()).hexdigest()[:16]
+
+
 def run_mbsync(conn: sqlite3.Connection, lib, *, limit: int | None = None, progress=sys.stderr) -> dict:
-    """Check albums never checked first, then the least recently checked. Network only."""
+    """Check albums never checked first, then the least recently checked. Network only.
+    Changes the user chose to leave (D48) stay `left` while MusicBrainz proposes the same."""
     from beets import metadata_plugins
 
     migrate(conn)
     seen = {r[0]: r[1] for r in conn.execute("SELECT album_id, checked_at FROM audit_mbsync")}
+    left = {r[0]: r[1] for r in conn.execute(
+        "SELECT album_id, left_digest FROM audit_mbsync WHERE left_digest IS NOT NULL")}
     albums = sorted((a for a in lib.albums() if a.mb_albumid), key=lambda a: (a.id in seen, seen.get(a.id, ""), a.id))
     albums = albums[:limit] if limit else albums
     counts = defaultdict(int)
+    failing = 0
     for n, album in enumerate(albums, 1):
         items = list(album.items())
         album_dir = os.path.dirname(os.fsdecode(items[0].path)) if items else None
         try:
             info = metadata_plugins.album_for_id(album.mb_albumid)
+            failing = 0
         except Exception as e:  # network or MusicBrainz trouble: try again next run
             print(f"mbsync {album.id}: {e}", file=progress)
             counts["error"] += 1
+            failing += 1
+            if failing >= MAX_ERRORS:
+                counts["stopped_after_errors"] = 1
+                break
             continue
         if not info:
             status, diff = "not_found", None
         else:
             diff = album_diff(album, info)
             status = "changed" if diff["tracks"] else "same"
+            if status == "changed" and left.get(album.id) == digest(diff):
+                status = "left"
         counts[status] += 1
-        conn.execute("""INSERT OR REPLACE INTO audit_mbsync
-            (album_id, mb_albumid, album, album_dir, status, changes, checked_at) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        conn.execute("""INSERT INTO audit_mbsync (album_id, mb_albumid, album, album_dir, status, changes, checked_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(album_id) DO UPDATE SET mb_albumid = excluded.mb_albumid,
+            album = excluded.album, album_dir = excluded.album_dir, status = excluded.status,
+            changes = excluded.changes, checked_at = excluded.checked_at""",
                      (album.id, album.mb_albumid, f"{album.albumartist} - {album.album}", album_dir, status,
                       json.dumps(diff, ensure_ascii=False) if diff else None, now()))
         conn.commit()
@@ -462,8 +495,9 @@ def mbsync_findings(conn: sqlite3.Connection, limit: int | None = None) -> dict:
         for k in c["fields"]:
             by_field[k] += 1
     checked = conn.execute("SELECT COUNT(*) FROM audit_mbsync").fetchone()[0]
+    left = conn.execute("SELECT COUNT(*) FROM audit_mbsync WHERE status = 'left'").fetchone()[0]
     return {"checked": checked, "changed": sum(c["status"] == "changed" for c in changed),
-            "not_found": sum(c["status"] == "not_found" for c in changed),
+            "not_found": sum(c["status"] == "not_found" for c in changed), "left": left,
             "albums_by_field": dict(sorted(by_field.items(), key=lambda kv: -kv[1])),
             "albums": changed[:limit] if limit else changed}
 
@@ -508,6 +542,25 @@ def log_relocate(conn, source: str, dest: str, reason: str, decided_by: str) -> 
                  "VALUES (?, 'relocate', ?, ?, ?, ?)", (now(), source, dest, reason, decided_by))
 
 
+def leave(conn: sqlite3.Connection, album_ids: list[int], reason: str, decided_by: str) -> dict:
+    """D48: the user doesn't want these changes. Remembered by their digest, so the nightly
+    re-check stays quiet until MusicBrainz proposes something different."""
+    migrate(conn)
+    out = []
+    with conn:
+        for album_id in album_ids:
+            row = conn.execute("SELECT status, changes, album FROM audit_mbsync WHERE album_id = ?",
+                               (album_id,)).fetchone()
+            if row is None or row["status"] != "changed":
+                out.append({"album_id": album_id, "skipped": "not a checked album with pending changes"})
+                continue
+            conn.execute("""UPDATE audit_mbsync SET status = 'left', left_digest = ?, left_reason = ?, left_by = ?,
+                            left_at = ? WHERE album_id = ?""",
+                         (digest(json.loads(row["changes"])), reason, decided_by, now(), album_id))
+            out.append({"album_id": album_id, "album": row["album"], "left": True})
+    return {"left": sum(1 for o in out if o.get("left")), "albums": out}
+
+
 def apply_mbsync(conn: sqlite3.Connection, lib, album_ids: list[int], reason: str, decided_by: str) -> dict:
     """Run beets mbsync on approved albums (tags written to library copies, files moved to the
     new layout), log every moved file and one mbsync row per album."""
@@ -520,7 +573,7 @@ def apply_mbsync(conn: sqlite3.Connection, lib, album_ids: list[int], reason: st
     for album_id in album_ids:
         row = conn.execute("SELECT status FROM audit_mbsync WHERE album_id = ?", (album_id,)).fetchone()
         album = lib.get_album(album_id)
-        if row is None or row["status"] != "changed" or album is None:
+        if row is None or row["status"] not in ("changed", "left") or album is None:
             out.append({"album_id": album_id, "skipped": "not a checked album with pending changes"})
             continue
         info = metadata_plugins.album_for_id(album.mb_albumid)
