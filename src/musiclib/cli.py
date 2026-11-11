@@ -240,6 +240,18 @@ def cmd_wanted(cfg: config.Config, args) -> None:
         _emit(wanted.write_page(conn, Path(args.out)))
 
 
+def cmd_stats(cfg: config.Config, args) -> None:
+    """D49: library statistics (read-only); --page writes the Library Almanac page."""
+    from . import beetsenv
+    beetsenv.setup(cfg)
+    from . import importer, stats
+
+    conn = db.connect(cfg.db_path)
+    importer.migrate(conn)
+    data = stats.collect(conn, importer.open_library(), cfg.library_dir)
+    _emit(stats.write_page(data, Path(args.page)) if args.page else data)
+
+
 def cmd_audit(cfg: config.Config, args) -> None:
     from . import beetsenv
     beetsenv.setup(cfg)
@@ -509,6 +521,10 @@ def main(argv: list[str] | None = None) -> None:
     wpg = wsub.add_parser("page", help="the open list as a self-contained HTML page")
     wpg.add_argument("--out", required=True)
     wp.set_defaults(func=cmd_wanted)
+
+    stp = sub.add_parser("stats", help="D49 library statistics (read-only)")
+    stp.add_argument("--page", metavar="FILE", help="write the Library Almanac page instead of JSON")
+    stp.set_defaults(func=cmd_stats)
 
     rep = sub.add_parser("report", help="summarize the inventory as JSON")
     rep.add_argument("--top", type=int, default=10, help="examples per section")

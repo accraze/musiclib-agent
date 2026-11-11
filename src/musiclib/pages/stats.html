@@ -1,0 +1,263 @@
+<title>Library Almanac</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one column almanac. Headline figures, the year chart full width, then a two-column
+   grid of breakdowns that stacks on phones; upkeep last. Same family as the Wanted List page. */
+:root {
+  --bg: #f4f4f1; --surface: #ffffff; --fg: #1c1d1f; --muted: #66686c; --line: #dcdcd6;
+  --accent: #1f6f8b; --accent-soft: #d6e8ee; --hurt: #a3361f; --low: #8a5a17; --good: #2f7a4f;
+  --q0: #1f6f8b; --q1: #4f93ab; --q2: #8dbac9; --q3: #d4a35a; --q4: #a3361f;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #141618; --surface: #1c1f22; --fg: #e9e8e4; --muted: #9a9da1; --line: #2e3236;
+  --accent: #63b4d1; --accent-soft: #1d3a46; --hurt: #ec8a73; --low: #e0a85a; --good: #6cc495;
+  --q0: #63b4d1; --q1: #3f8aa6; --q2: #2c5f72; --q3: #c89344; --q4: #ec8a73; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #141618; --surface: #1c1f22; --fg: #e9e8e4; --muted: #9a9da1; --line: #2e3236;
+  --accent: #63b4d1; --accent-soft: #1d3a46; --hurt: #ec8a73; --low: #e0a85a; --good: #6cc495;
+  --q0: #63b4d1; --q1: #3f8aa6; --q2: #2c5f72; --q3: #c89344; --q4: #ec8a73; color-scheme: dark }
+
+body { background: var(--bg); color: var(--fg); font: 15px/1.5 var(--body); }
+.wrap { max-width: 980px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 64px; display: grid; gap: 36px; }
+header { display: grid; gap: 6px; }
+h1 { font: 800 clamp(28px, 5vw, 44px)/1.05 var(--display); margin: 0; letter-spacing: -0.015em; text-wrap: balance; }
+.stamp { font: 12px var(--mono); color: var(--muted); }
+h2 { font: 700 19px/1.2 var(--display); margin: 0; text-wrap: balance; }
+.sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+.num { font-variant-numeric: tabular-nums; }
+
+.figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1px; background: var(--line);
+  border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.figures div { background: var(--surface); padding: 14px 16px; display: grid; gap: 2px; align-content: start; }
+.figures b { font: 700 clamp(24px, 3.6vw, 32px)/1.1 var(--display); font-variant-numeric: tabular-nums; }
+.figures span { font-size: 13px; color: var(--muted); }
+
+section { display: grid; gap: 12px; min-width: 0; align-content: start; }
+.chart { width: 100%; overflow-x: auto; }
+.chart svg { display: block; width: 100%; min-width: 560px; height: auto; }
+.chart text { fill: var(--muted); font: 11px var(--mono); }
+.chart .bar { fill: var(--accent); }
+.chart .bar.peak { fill: var(--fg); }
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.decades { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); }
+.decades b { color: var(--fg); font-variant-numeric: tabular-nums; }
+
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr)); gap: 36px 40px; }
+
+.stack { display: flex; height: 18px; border-radius: 4px; overflow: hidden; background: var(--line); }
+.stack i { display: block; height: 100%; min-width: 2px; }
+.legend { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.legend li { display: grid; grid-template-columns: 12px 1fr auto auto; gap: 10px; align-items: center; font-size: 14px; }
+.legend li i { width: 12px; height: 12px; border-radius: 3px; }
+.legend .n { font: 13px var(--mono); color: var(--muted); text-align: right; }
+.legend .n + .n { min-width: 6ch; }
+
+.bars { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.bars li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; font-size: 14px; }
+.bars .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bars .n { font: 13px var(--mono); color: var(--muted); }
+.bars .track { grid-column: 1 / -1; height: 5px; background: var(--line); border-radius: 3px; overflow: hidden; }
+.bars .track i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.bars li:first-child .track i { background: var(--fg); }
+
+.records { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 12px; }
+.records div { border-top: 3px solid var(--fg); padding-top: 10px; display: grid; gap: 2px; align-content: start; min-width: 0; }
+.records .what { font: 500 11px var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.records .val { font: 700 22px/1.15 var(--display); font-variant-numeric: tabular-nums; }
+.records .who { font-size: 14px; overflow-wrap: anywhere; }
+.records .who span { color: var(--muted); }
+
+.upkeep { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 12px; }
+.upkeep > div { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px;
+  display: grid; gap: 4px; align-content: start; }
+.upkeep .head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.upkeep .head b { font: 700 22px var(--display); font-variant-numeric: tabular-nums; }
+.upkeep .head span { font-weight: 700; }
+.upkeep p { margin: 0; font-size: 13px; color: var(--muted); }
+.upkeep a { color: var(--accent); }
+.upkeep .meter { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 4px; }
+.upkeep .meter i { display: block; height: 100%; background: var(--good); }
+.pill { font: 500 11px var(--mono); padding: 1px 8px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+.pill.hurt { color: var(--hurt); } .pill.low { color: var(--low); } .pill.good { color: var(--good); }
+a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+footer { font-size: 13px; color: var(--muted); }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Library Almanac</h1>
+    <span class="stamp" id="stamp"></span>
+  </header>
+  <div class="figures" id="figures"></div>
+
+  <section>
+    <div><h2>Albums by release year</h2><p class="sub" id="years-sub"></p></div>
+    <div class="chart" id="years"></div>
+    <div class="decades" id="decades"></div>
+  </section>
+
+  <div class="grid2">
+    <section><div><h2>Formats</h2><p class="sub">Tracks and space on disk.</p></div><div id="formats"></div></section>
+    <section><div><h2>Sound quality</h2><p class="sub">Tracks by format and bitrate.</p></div><div id="quality"></div></section>
+    <section><div><h2>Most albums</h2><p class="sub">By album artist, compilations left out.</p></div><ul class="bars" id="artists"></ul></section>
+    <section><div><h2>Genres</h2><p class="sub" id="genres-sub"></p></div><ul class="bars" id="genres"></ul></section>
+    <section><div><h2>Where releases come from</h2><p class="sub">MusicBrainz release country.</p></div><ul class="bars" id="countries"></ul></section>
+    <section><div><h2>Labels</h2><p class="sub">The most frequent record labels.</p></div><ul class="bars" id="labels"></ul></section>
+  </div>
+
+  <section>
+    <div><h2>Shelf records</h2></div>
+    <div class="records" id="records"></div>
+  </section>
+
+  <section>
+    <div><h2>Upkeep</h2><p class="sub">What the nightly audit and the queues know about the library.</p></div>
+    <div class="upkeep" id="upkeep"></div>
+  </section>
+
+  <footer id="foot"></footer>
+</div>
+
+<script type="application/json" id="data">__DATA__</script>
+<script>
+(() => {
+  const D = JSON.parse(document.getElementById("data").textContent);
+  const L = D.library, H = D.health, T = L.totals;
+  const $ = (id) => document.getElementById(id);
+  const fmt = (n) => Number(n).toLocaleString("en-US");
+  const el = (tag, attrs = {}, ...kids) => {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) k === "text" ? (e.textContent = v) : e.setAttribute(k, v);
+    for (const k of kids) e.append(k);
+    return e;
+  };
+  const bytes = (b) => b >= 1e12 ? (b / 1e12).toFixed(2) + " TB" : b >= 1e9 ? (b / 1e9).toFixed(1) + " GB" : (b / 1e6).toFixed(0) + " MB";
+  const hm = (s) => { const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60); return h ? `${h} h ${m} min` : `${m} min`; };
+  const pct = (n, of) => of ? (100 * n / of) : 0;
+
+  $("stamp").textContent = "As of " + new Date(D.generated).toLocaleString("en-US", { dateStyle: "long", timeStyle: "short" });
+
+  // Headline figures
+  const days = T.seconds / 86400;
+  [[fmt(T.albums), "albums"], [fmt(T.tracks), "tracks"], [fmt(T.artists), "album artists"],
+   [days.toFixed(0), "days of music, played end to end"], [bytes(T.bytes), "on disk"],
+   [fmt(H.unsorted.folders), `folders in Unsorted (${fmt(H.unsorted.files)} files)`]]
+    .forEach(([v, k]) => $("figures").append(el("div", {}, el("b", { text: v }), el("span", { text: k }))));
+
+  // Year chart
+  (() => {
+    const ys = L.years; if (!ys.length) return;
+    const counts = new Map(ys), y0 = ys[0][0], y1 = ys[ys.length - 1][0];
+    const max = Math.max(...ys.map((y) => y[1]));
+    const peak = ys.find((y) => y[1] === max)[0];
+    const W = 900, Hh = 220, padL = 34, padB = 22, padT = 10, n = y1 - y0 + 1;
+    const bw = (W - padL) / n, scale = (v) => (Hh - padB - padT) * v / max;
+    const step = max > 200 ? 100 : max > 80 ? 40 : max > 40 ? 20 : 10;
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", `0 0 ${W} ${Hh}`);
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", `Albums per release year, ${y0} to ${y1}; most in ${peak} (${max})`);
+    const add = (tag, a, text) => { const e = document.createElementNS(ns, tag); for (const k in a) e.setAttribute(k, a[k]); if (text != null) e.textContent = text; svg.append(e); return e; };
+    for (let v = 0; v <= max; v += step) {
+      const y = Hh - padB - scale(v);
+      add("line", { x1: padL, x2: W, y1: y, y2: y, class: "grid" });
+      add("text", { x: padL - 6, y: y + 4, "text-anchor": "end" }, v);
+    }
+    for (let yr = y0; yr <= y1; yr++) {
+      const v = counts.get(yr) || 0, x = padL + (yr - y0) * bw;
+      if (v) {
+        const r = add("rect", { x: x + 0.5, y: Hh - padB - scale(v), width: Math.max(bw - 1.5, 1), height: scale(v), class: "bar" + (yr === peak ? " peak" : "") });
+        const t = document.createElementNS(ns, "title"); t.textContent = `${yr}: ${v} albums`; r.append(t);
+      }
+      if (yr % 10 === 0) add("text", { x: x + bw / 2, y: Hh - 6, "text-anchor": "middle" }, yr);
+    }
+    $("years").append(svg);
+    const total = ys.reduce((a, y) => a + y[1], 0);
+    $("years-sub").textContent = `${fmt(total)} dated albums from ${y0} to ${y1}. The busiest year is ${peak}, with ${max}.`;
+    const dec = new Map();
+    ys.forEach(([y, v]) => dec.set(Math.floor(y / 10) * 10, (dec.get(Math.floor(y / 10) * 10) || 0) + v));
+    [...dec].forEach(([d, v]) => $("decades").append(el("span", {}, `${d}s `, el("b", { text: fmt(v) }))));
+  })();
+
+  // Stacked bar + legend
+  const stacked = (host, rows, total, colors, extra) => {
+    const bar = el("div", { class: "stack", role: "img", "aria-label": rows.map((r) => `${r.label} ${pct(r.n, total).toFixed(1)}%`).join(", ") });
+    const leg = el("ul", { class: "legend" });
+    rows.forEach((r, i) => {
+      const c = colors[i] || "var(--muted)";
+      bar.append(el("i", { style: `width:${pct(r.n, total)}%;background:${c}`, title: r.label }));
+      leg.append(el("li", {}, el("i", { style: `background:${c}` }), el("span", { text: r.label }),
+        el("span", { class: "n", text: extra ? extra(r) : fmt(r.n) }), el("span", { class: "n", text: pct(r.n, total).toFixed(1) + "%" })));
+    });
+    host.append(el("div", { style: "display:grid;gap:12px" }, bar, leg));
+  };
+  const top = L.formats.slice(0, 3), rest = L.formats.slice(3);
+  const fRows = top.map((f) => ({ label: f.format, n: f.tracks, bytes: f.bytes }));
+  if (rest.length) fRows.push({ label: rest.map((f) => f.format).join(", "), n: rest.reduce((a, f) => a + f.tracks, 0), bytes: rest.reduce((a, f) => a + f.bytes, 0) });
+  stacked($("formats"), fRows, T.tracks, ["var(--q0)", "var(--q1)", "var(--q2)", "var(--q3)"], (r) => `${fmt(r.n)} · ${bytes(r.bytes)}`);
+  const QL = { "lossless": "Lossless", "256k+": "Lossy, 256 kbps and up", "192k": "Lossy, 192–255 kbps", "128k": "Lossy, 128–191 kbps", "under 128k": "Lossy, under 128 kbps" };
+  stacked($("quality"), L.quality.map((q) => ({ label: QL[q.tier] || q.tier, n: q.tracks })), T.tracks,
+    ["var(--q0)", "var(--q1)", "var(--q2)", "var(--q3)", "var(--q4)"]);
+
+  // Ranked bars
+  const COUNTRY = { US: "United States", GB: "United Kingdom", XW: "Worldwide", XE: "Europe", DE: "Germany", JP: "Japan",
+    FR: "France", CA: "Canada", AU: "Australia", IT: "Italy", NL: "Netherlands", BR: "Brazil", SE: "Sweden", ES: "Spain",
+    BE: "Belgium", JM: "Jamaica", NZ: "New Zealand", FI: "Finland", NO: "Norway", DK: "Denmark", AT: "Austria", CH: "Switzerland",
+    RU: "Russia", MX: "Mexico", AR: "Argentina", ET: "Ethiopia", NG: "Nigeria", ZA: "South Africa", PL: "Poland", GR: "Greece", IE: "Ireland", KR: "South Korea" };
+  const ranked = (host, rows, label = (x) => x) => {
+    const max = rows.length ? rows[0][1] : 1;
+    rows.forEach(([k, n]) => host.append(el("li", {}, el("span", { class: "label", text: label(k), title: label(k) }),
+      el("span", { class: "n", text: fmt(n) }), el("span", { class: "track" }, el("i", { style: `width:${pct(n, max)}%` })))));
+  };
+  ranked($("artists"), L.artists.slice(0, 15));
+  ranked($("genres"), L.genres.slice(0, 12));
+  $("genres-sub").textContent = `From the files' own tags, so loose. ${fmt(T.with_genre)} of ${fmt(T.albums)} albums have one.`;
+  ranked($("countries"), L.countries.slice(0, 10), (c) => COUNTRY[c] || c);
+  ranked($("labels"), L.labels.slice(0, 10));
+
+  // Records
+  const R = L.records;
+  const rec = (what, val, r) => r && $("records").append(el("div", {}, el("span", { class: "what", text: what }),
+    el("span", { class: "val", text: val }), el("span", { class: "who" }, `${r.artist} — ${r.album} `, el("span", { text: r.year ? `(${r.year})` : "" }))));
+  rec("Oldest release", R.oldest && String(R.oldest.year), R.oldest);
+  rec("Longest album", R.longest_album && hm(R.longest_album.seconds), R.longest_album);
+  rec("Most tracks", R.most_tracks && `${fmt(R.most_tracks.tracks)} tracks`, R.most_tracks);
+  rec("Longest track", R.longest_track && hm(R.longest_track.seconds), R.longest_track);
+
+  // Upkeep
+  const W = H.wanted || {}, wantedOpen = Object.values(W).reduce((a, b) => a + b, 0);
+  const Q = H.review_open || {}, queue = Object.values(Q).reduce((a, b) => a + b, 0);
+  const card = (title, value, pill, text, meter) => {
+    const d = el("div", {}, el("div", { class: "head" }, el("span", { text: title }), el("b", { text: value })));
+    if (pill) d.querySelector(".head span").after(pill);
+    d.append(el("p", {}, ...[].concat(text)));
+    if (meter != null) d.append(el("div", { class: "meter" }, el("i", { style: `width:${meter}%` })));
+    $("upkeep").append(d);
+  };
+  const pill = (cls, t) => el("span", { class: "pill " + cls, text: t });
+  card("Damaged files", fmt(H.damaged), H.damaged ? pill("hurt", "needs copies") : pill("good", "none"),
+    `Tracks that stop short of their MusicBrainz length. ${fmt(H.decoded)} files decoded in full.`);
+  card("Wanted list", fmt(wantedOpen), null,
+    [`${W.damaged || 0} damaged albums, ${W.damaged_file || 0} damaged singles, ${W.low_bitrate || 0} low-bitrate albums, ${W.manual || 0} picked by hand. `,
+     el("a", { href: "https://claude.ai/artifact/HDxxoubR1CmCv4tZxotTAE", target: "_blank", rel: "noopener", text: "Open the list" })]);
+  const mb = H.mbsync;
+  card("MusicBrainz re-check", `${pct(mb.checked, T.with_mbid).toFixed(0)}%`, mb.changed ? pill("low", `${fmt(mb.changed)} corrections`) : null,
+    `${fmt(mb.checked)} of ${fmt(T.with_mbid)} albums re-checked against MusicBrainz; 300 more each night.` + (mb.left ? ` ${fmt(mb.left)} left as they are.` : ""),
+    pct(mb.checked, T.with_mbid));
+  card("Cover art", `${pct(T.albums - H.no_art, T.albums).toFixed(1)}%`, H.no_art ? pill("low", `${fmt(H.no_art)} missing`) : pill("good", "complete"),
+    `${fmt(T.albums - H.no_art)} of ${fmt(T.albums)} albums have a cover image.`, pct(T.albums - H.no_art, T.albums));
+  card("Waiting for review", fmt(queue), null,
+    `${Q.weak || 0} weak matches, ${Q.none || 0} with no match, ${Q.dupe || 0} duplicate groups, ${Q.close || 0} close matches, ${Q.error || 0} errors.`);
+  card("MusicBrainz IDs", `${pct(T.with_mbid, T.albums).toFixed(0)}%`, null,
+    T.with_mbid === T.albums ? "Every album outside Unsorted is matched to a MusicBrainz release."
+      : `${fmt(T.albums - T.with_mbid)} albums outside Unsorted have no MusicBrainz release.`, pct(T.with_mbid, T.albums));
+
+  $("foot").textContent = `Counts cover the tagged library; the ${fmt(H.unsorted.folders)} Unsorted folders are kept as they came and counted separately.`;
+})();
+</script>
